@@ -1,9 +1,10 @@
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import select, func
+from sqlalchemy import select, func, exists, and_, or_
 from typing import List
 
 from app.db.models.member import Member
-from app.schemas.member import MemberCreate, MemberUpdate
+from app.db.models.member_embedding import MemberEmbedding
+from app.schemas.member import MemberCreate, MemberUpdate 
 
 
 class MemberRepository:
@@ -81,7 +82,7 @@ class MemberRepository:
 
         db.commit()
 
-        # 🔁 CRITICAL: re-fetch with relationships eagerly loaded
+        # CRITICAL: re-fetch with relationships eagerly loaded
         return (
             db.query(Member)
             .options(
@@ -95,16 +96,30 @@ class MemberRepository:
     # -------------------------
     # LIST (search + pagination)
     # -------------------------
+    
     @staticmethod
     def list(
         db: Session,
         search: str | None = None,
         page: int = 0,
         page_size: int = 10,
-    ) -> tuple[list[Member], int]:
+    ) -> tuple[list[tuple[Member, bool]], int]:
+        has_embeddings_expr = exists(
+            select(1).where(
+                and_(
+                    MemberEmbedding.member_id == Member.id,
+                    or_(
+                        MemberEmbedding.body_embedding.isnot(None),
+                        MemberEmbedding.face_embedding.isnot(None),
+                        MemberEmbedding.back_body_embedding.isnot(None),
+                    ),
+                )
+            )
+        ).label("has_embeddings")
 
+        # then build the main query
         stmt = (
-            select(Member)
+            select(Member, has_embeddings_expr)
             .options(
                 joinedload(Member.department),
                 joinedload(Member.access_groups),
@@ -132,9 +147,15 @@ class MemberRepository:
             .limit(page_size)
         )
 
-        members = db.execute(stmt).unique().scalars().all()
-        return members, total
+        rows = db.execute(stmt).unique().all()
 
+        members = []
+        for member, has_embeddings in rows:
+            member.has_embeddings = has_embeddings  # attach flag
+            members.append(member)
+
+        return members, total
+ 
 
     # -------------------------
     # LIST ALL ACTIVE (for dropdowns)
