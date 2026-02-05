@@ -108,16 +108,17 @@ class MemberRepository:
             select(1).where(
                 and_(
                     MemberEmbedding.member_id == Member.id,
-                    or_(
-                        MemberEmbedding.body_embedding.isnot(None),
-                        MemberEmbedding.face_embedding.isnot(None),
-                        MemberEmbedding.back_body_embedding.isnot(None),
-                    ),
+                    MemberEmbedding.body_embedding.isnot(None),
+                    MemberEmbedding.face_embedding.isnot(None),
+                    MemberEmbedding.back_body_embedding.isnot(None),
+                    MemberEmbedding.body_embeddings_raw.isnot(None),
+                    MemberEmbedding.face_embeddings_raw.isnot(None),
+                    MemberEmbedding.back_body_embeddings_raw.isnot(None),
                 )
             )
         ).label("has_embeddings")
 
-        # then build the main query
+        # build the main query
         stmt = (
             select(Member, has_embeddings_expr)
             .options(

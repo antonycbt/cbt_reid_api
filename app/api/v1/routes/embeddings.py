@@ -3,46 +3,17 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, conint
 from typing import Optional, List, Dict, Any
-
-# IMPORTANT: import your new service module here
-# If you saved service above as app/services/embedding_service.py:
 from app.services import embedding_service
+from app.schemas import embedding
 
 router = APIRouter()
 
 
-class StartRequest(BaseModel):
-    member_id: conint(gt=0) = Field(..., description="Member/User ID to capture for")
-    camera_ids: Optional[List[int]] = Field(None, description="Which cameras to use. If null -> all configured")
-    show_viewer: bool = Field(True, description="Open OpenCV viewer window")
-    clear_existing: bool = Field(False, description="Clear existing galleries before starting")
 
 
-class StartResponse(BaseModel):
-    status: str
-    message: str = ""
-    member_id: Optional[int] = None
-    member_name: Optional[str] = None
-    num_cams: int = 0
-    camera_ids: List[int] = []
-    configured_camera_ids: Optional[List[int]] = None
 
-
-class StopResponse(BaseModel):
-    status: str
-    message: str = ""
-    member_id: Optional[int] = None
-    camera_ids: List[int] = []
-
-
-class ExtractRequest(BaseModel):
-    member_id: conint(gt=0)
-    camera_ids: Optional[List[int]] = None
-    sync: bool = False
-
-
-@router.post("/start", response_model=StartResponse)
-def start(req: StartRequest) -> StartResponse:
+@router.post("/start", response_model=embedding.StartResponse)
+def start(req: embedding.StartRequest) -> embedding.StartResponse:
     try:
         res = embedding_service.start_extraction(
             member_id=req.member_id,
@@ -63,7 +34,7 @@ def start(req: StartRequest) -> StartResponse:
         raise HTTPException(status_code=400, detail=res.get("message", "Unknown error"))
 
     cam_ids = list(res.get("camera_ids") or [])
-    return StartResponse(
+    return embedding.StartResponse(
         status=str(res.get("status", "ok")),
         message=str(res.get("message", "")),
         member_id=res.get("member_id"),
@@ -74,8 +45,8 @@ def start(req: StartRequest) -> StartResponse:
     )
 
 
-@router.post("/stop", response_model=StopResponse)
-def stop(reason: str = Query("user", description="Reason for stopping")) -> StopResponse:
+@router.post("/stop", response_model=embedding.StopResponse)
+def stop(reason: str = Query("user", description="Reason for stopping")) -> embedding.StopResponse:
     try:
         res = embedding_service.stop_extraction(reason=reason)
     except Exception as e:
@@ -84,7 +55,7 @@ def stop(reason: str = Query("user", description="Reason for stopping")) -> Stop
     if not isinstance(res, dict):
         raise HTTPException(status_code=500, detail="stop_extraction returned invalid response")
 
-    return StopResponse(
+    return embedding.StopResponse(
         status=str(res.get("status", "ok")),
         message=str(res.get("message", "")),
         member_id=res.get("member_id"),
@@ -93,7 +64,7 @@ def stop(reason: str = Query("user", description="Reason for stopping")) -> Stop
 
 
 @router.post("/extract", response_model=Dict[str, Any])
-def extract(req: ExtractRequest) -> Dict[str, Any]:
+def extract(req: embedding.ExtractRequest) -> Dict[str, Any]:
     try:
         if req.sync:
             res = embedding_service.extract_embeddings_sync(req.member_id, req.camera_ids)
