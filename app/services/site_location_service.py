@@ -218,8 +218,7 @@ class SiteLocationService:
                     {
                         "id": cam.id,
                         "name": cam.name,
-                        "ip_address": cam.ip_address,
-                        "location_type": cam.location_type,
+                        "ip_address": cam.ip_address, 
                         "is_active": cam.is_active,
                     } for cam in getattr(node, "cameras", [])
                 ],

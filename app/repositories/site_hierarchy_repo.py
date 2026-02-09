@@ -4,10 +4,27 @@ from typing import List, Optional
 from app.db.models.site_hierarchy import SiteHierarchy
 from app.schemas.site_hierarchy import SiteHierarchyCreate, SiteHierarchyUpdate
 from app.db.models.site_location import SiteLocation
+from sqlalchemy.exc import IntegrityError
+from fastapi import HTTPException, status
 
+class SiteHierarchyRepository: 
 
-class SiteHierarchyRepository:
+    # DUPLICATION CHECK
+    @staticmethod
+    def exists_with_name(
+        db: Session,
+        name: str,
+        exclude_id: int | None = None,
+    ) -> bool:
+        stmt = select(SiteHierarchy).where(
+            func.lower(SiteHierarchy.name) == name.lower(),
+        )
 
+        if exclude_id:
+            stmt = stmt.where(SiteHierarchy.id != exclude_id)
+
+        return db.execute(stmt).scalars().first() is not None
+    
     # CREATE
     @staticmethod
     def create(db: Session, payload: SiteHierarchyCreate) -> SiteHierarchy:
@@ -15,10 +32,53 @@ class SiteHierarchyRepository:
             name=payload.name,
             parent_site_hierarchy_id=payload.parent_site_hierarchy_id,
         )
-        db.add(site)
-        db.commit()
 
-        # 🔁 CRITICAL: re-fetch with parent eagerly loaded
+        db.add(site)
+
+        try:
+            db.flush()  # get ID before commit
+
+            # -------------------------------------------------
+            # 1. If parent exists → parent is no longer leaf
+            # deactivate parent location
+            # -------------------------------------------------
+            if payload.parent_site_hierarchy_id:
+                parent_location = (
+                    db.query(SiteLocation)
+                    .filter(
+                        SiteLocation.site_hierarchy_id == payload.parent_site_hierarchy_id,
+                        SiteLocation.is_active == True
+                    )
+                    .first()
+                )
+
+                if parent_location:
+                    parent_location.is_active = False  # soft deactivate
+
+            # -------------------------------------------------
+            # 2. New node is leaf → create its location
+            # -------------------------------------------------
+            existing_location = db.query(SiteLocation).filter(
+                SiteLocation.site_hierarchy_id == site.id
+            ).first()
+
+            if not existing_location:
+                location = SiteLocation(
+                    name=site.name,
+                    site_hierarchy_id=site.id,
+                    is_active=True,
+                )
+                db.add(location)
+
+            db.commit()
+
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Site name already exists",
+            )
+
         return (
             db.query(SiteHierarchy)
             .options(joinedload(SiteHierarchy.parent))
@@ -26,28 +86,37 @@ class SiteHierarchyRepository:
             .one()
         )
 
+ 
+
     # GET BY ID
     @staticmethod
     def get_by_id(db: Session, site_id: int) -> SiteHierarchy | None:
         return db.get(SiteHierarchy, site_id)
+    
+    def sync_leaf_state(db: Session, hierarchy_id: int):
+        # check if node has children
+        has_children = db.query(SiteHierarchy.id).filter(
+            SiteHierarchy.parent_site_hierarchy_id == hierarchy_id
+        ).first() is not None
 
-    # DUPLICATION CHECK (THIS WAS MISSING)
-    @staticmethod
-    def exists_with_name(
-        db: Session,
-        name: str,
-        parent_id: int | None,
-        exclude_id: int | None = None,
-    ) -> bool:
-        stmt = select(SiteHierarchy).where(
-            func.lower(SiteHierarchy.name) == name.lower(),
-            SiteHierarchy.parent_site_hierarchy_id == parent_id,
-        )
+        location = db.query(SiteLocation).filter(
+            SiteLocation.site_hierarchy_id == hierarchy_id
+        ).first()
 
-        if exclude_id:
-            stmt = stmt.where(SiteHierarchy.id != exclude_id)
-
-        return db.execute(stmt).scalars().first() is not None
+        if has_children:
+            # node is NOT leaf → deactivate location
+            if location and location.is_active:
+                location.is_active = False
+        else:
+            # node IS leaf → ensure location exists
+            if not location:
+                db.add(SiteLocation(
+                    name="Auto",
+                    site_hierarchy_id=hierarchy_id,
+                    is_active=True
+                ))
+            elif not location.is_active:
+                location.is_active = True 
 
     # UPDATE
     @staticmethod
@@ -57,18 +126,43 @@ class SiteHierarchyRepository:
         payload: SiteHierarchyUpdate,
     ) -> SiteHierarchy:
 
+        old_parent_id = site.parent_site_hierarchy_id
+
+        if SiteHierarchyRepository.exists_with_name(db, payload.name, exclude_id=site.id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Site name already exists",
+            )
+
         for field, value in payload.model_dump(exclude_unset=True).items():
             setattr(site, field, value)
 
+        db.flush()
+
+        # ---------------------------------------
+        # sync leaf lifecycle
+        # ---------------------------------------
+
+        # this node
+        SiteHierarchyRepository.sync_leaf_state(db, site.id)
+
+        # old parent may become leaf
+        if old_parent_id and old_parent_id != site.parent_site_hierarchy_id:
+            SiteHierarchyRepository.sync_leaf_state(db, old_parent_id)
+
+        # new parent loses leaf status
+        if site.parent_site_hierarchy_id:
+            SiteHierarchyRepository.sync_leaf_state(db, site.parent_site_hierarchy_id)
+
         db.commit()
 
-        # 🔁 CRITICAL: re-fetch with parent eagerly loaded
         return (
             db.query(SiteHierarchy)
             .options(joinedload(SiteHierarchy.parent))
             .filter(SiteHierarchy.id == site.id)
             .one()
         )
+
 
     @staticmethod
     def list(

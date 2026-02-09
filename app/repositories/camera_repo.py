@@ -1,7 +1,7 @@
 # camera_repo.py
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select, func
-from app.db.models.camera import Camera
+from app.db.models import Camera, SiteLocation
 from app.schemas.camera import CameraCreate, CameraUpdate
 
 class CameraRepository:
@@ -11,8 +11,7 @@ class CameraRepository:
         camera = Camera(
             name=payload.name,
             ip_address=payload.ip_address,
-            site_location_id=payload.site_location_id,
-            location_type=payload.location_type,
+            site_location_id=payload.site_location_id, 
         )
         db.add(camera)
         db.commit()
@@ -23,7 +22,10 @@ class CameraRepository:
     def get_by_id(db: Session, camera_id: int) -> Camera | None:
         return (
             db.query(Camera)
-            .options(joinedload(Camera.site_location))  # eager load
+            .options(
+                joinedload(Camera.site_location_rel)
+                .joinedload(SiteLocation.site_hierarchy)
+            )
             .filter(Camera.id == camera_id)
             .first()
         )
@@ -36,19 +38,27 @@ class CameraRepository:
         page_size: int = 10
     ) -> tuple[list[Camera], int]:
 
-        stmt = db.query(Camera).options(joinedload(Camera.site_location))
-
+        stmt = (
+            db.query(Camera)
+            .options(
+                joinedload(Camera.site_location_rel)
+                .joinedload(SiteLocation.site_hierarchy)
+            )
+        ) 
         if search:
             stmt = stmt.filter(Camera.name.ilike(f"%{search}%"))
 
         total = stmt.count()
 
-        cameras = stmt.order_by(
-            Camera.is_active.desc(),
-            Camera.name.asc()
-        ).offset(page * page_size).limit(page_size).all()
+        cameras = (
+            stmt.order_by(Camera.is_active.desc(), Camera.name.asc())
+            .offset(page * page_size)
+            .limit(page_size)
+            .all()
+        )
 
         return cameras, total
+
 
     @staticmethod
     def update(db: Session, camera: Camera, payload: CameraUpdate) -> Camera:

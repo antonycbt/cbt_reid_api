@@ -1,8 +1,8 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import select, insert, delete, func
 from app.db.models.associations import member_access
-from sqlalchemy.orm import joinedload
-from app.db.models import Member
+from sqlalchemy.orm import joinedload, with_loader_criteria
+from app.db.models import Member, AccessGroup
 
 class MemberAccessRepository:
 
@@ -72,7 +72,14 @@ class MemberAccessRepository:
     # -------- LIST --------
     @staticmethod
     def list(db, search: str | None, page: int = 0, page_size: int = 10): 
-        query = db.query(Member).options(joinedload(Member.access_groups))
+        query = (
+                    db.query(Member)
+                    .options(
+                        joinedload(Member.access_groups),
+                        with_loader_criteria(AccessGroup, AccessGroup.is_active.is_(True))
+                    )
+                )
+        
 
         if search:
             query = query.filter(

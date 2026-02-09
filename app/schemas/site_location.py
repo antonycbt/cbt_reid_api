@@ -7,8 +7,7 @@ from typing import Optional
 # -------------------------
 class SiteLocationCreate(BaseModel):
     name: str = Field(..., min_length=2, max_length=32)
-    site_hierarchy_id: int
-    parent_site_location_id: Optional[int] = None
+    site_hierarchy_id: int 
     is_public: bool = False
     is_active: bool = True
 
@@ -24,8 +23,7 @@ class SiteLocationCreate(BaseModel):
 # -------------------------
 class SiteLocationUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=2, max_length=32)
-    site_hierarchy_id: Optional[int] = None
-    parent_site_location_id: Optional[int] = None
+    site_hierarchy_id: Optional[int] = None 
     is_public: Optional[bool] = None
     is_active: Optional[bool] = None
 
@@ -58,8 +56,7 @@ class SiteHierarchyParentOut(BaseModel):
 class SiteLocationOut(BaseModel):
     id: int
     name: str
-    site_hierarchy_id: int
-    parent_site_location_id: Optional[int]
+    site_hierarchy_id: int 
     is_public: bool
     is_active: bool
 
@@ -74,8 +71,7 @@ class SiteLocationTreeOut(BaseModel):
     id: int
     name: str
     site_hierarchy_id: int
-    site_hierarchy_name: Optional[str]
-    parent_site_location_id: Optional[int]
+    site_hierarchy_name: Optional[str] 
     is_public: bool
     is_active: bool
     children: list["SiteLocationTreeOut"] = []

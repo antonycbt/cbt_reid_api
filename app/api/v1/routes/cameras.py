@@ -10,9 +10,8 @@ from app.schemas.camera import (
 from app.schemas.common import MessageResponse
 from app.services.camera_service import CameraService
 from app.db.session import get_db
-from app.db.models.camera import Camera
-from app.db.models.site_location import SiteLocation
-from app.core.constants import CAM_LOCATION_TYPES
+from app.db.models.camera import Camera 
+from app.db.models.site_location import SiteLocation 
 
 router = APIRouter()
 
@@ -24,20 +23,32 @@ def list_active_cameras(db: Session = Depends(get_db)):
     return {"message": "Active cameras fetched successfully", "data": data}
 
 
-# FETCH site locations
+# FETCH site locations 
 @router.get("/load_site_locations", response_model=MessageResponse[list[dict]])
 def list_site_locations(db: Session = Depends(get_db)):
-    locations = db.query(SiteLocation).all()
-    data = [{"id": loc.id, "name": loc.name} for loc in locations]
-    return {"message": "Site locations fetched successfully", "data": data}
+    locations = (
+        db.query(SiteLocation)
+        .options(joinedload(SiteLocation.site_hierarchy))
+        .filter(SiteLocation.is_active.is_(True))
+        .all()
+    )
 
+    data = [
+        {
+            "id": loc.id,
+            "name": loc.site_hierarchy.name if loc.site_hierarchy else None,
+        }
+        for loc in locations
+    ]
+
+    return {"message": "Site locations fetched successfully", "data": data} 
 
 # CREATE camera
 @router.post("", response_model=MessageResponse[CameraOut])
 def create_camera(payload: CameraCreate, db: Session = Depends(get_db)):
     camera = CameraService.create_camera(db, payload)
 
-    # 🔥 reload with relationship eager loaded
+    # reload with relationship eager loaded
     camera = (
         db.query(Camera)
         .options(joinedload(Camera.site_location))
@@ -46,16 +57,6 @@ def create_camera(payload: CameraCreate, db: Session = Depends(get_db)):
     )
 
     return {"message": "Camera created successfully", "data": camera}
-
-
-# location types
-@router.get("/location-types", response_model=MessageResponse[dict])
-def list_location_types():
-    return {
-        "message": "Location types fetched successfully",
-        "data": CAM_LOCATION_TYPES,
-    }
-
 
 # GET camera by ID
 @router.get("/{camera_id}", response_model=MessageResponse[CameraOut])

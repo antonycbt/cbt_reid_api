@@ -1,8 +1,8 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import select, insert, delete, func
 from app.db.models.associations import site_location_access
-from sqlalchemy.orm import joinedload
-from app.db.models import SiteLocation
+from sqlalchemy.orm import joinedload, with_loader_criteria
+from app.db.models import SiteLocation, AccessGroup
 
 class SiteLocationAccessRepository:
 
@@ -87,7 +87,14 @@ class SiteLocationAccessRepository:
             ...
         ]
         """
-        query = db.query(SiteLocation).options(joinedload(SiteLocation.access_groups))
+        query = (
+            db.query(SiteLocation)
+            .options(
+                joinedload(SiteLocation.access_groups),
+                with_loader_criteria(AccessGroup, AccessGroup.is_active.is_(True))
+            )
+            .filter(SiteLocation.is_active.is_(True))
+        )
 
         if search:
             query = query.filter(SiteLocation.name.ilike(f"%{search}%"))

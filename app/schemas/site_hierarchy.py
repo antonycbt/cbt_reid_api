@@ -1,16 +1,24 @@
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List
-
-
-class SiteHierarchyCreate(BaseModel):
+from app.schemas.base import TrimmedModel 
+# -------------------------
+# CREATE
+# -------------------------
+class SiteHierarchyCreate(TrimmedModel):
     name: str
     parent_site_hierarchy_id: Optional[int] = None
     is_active: bool = True
 
-class SiteHierarchyUpdate(BaseModel):
+
+# -------------------------
+# UPDATE
+# -------------------------
+class SiteHierarchyUpdate(TrimmedModel):
     name: Optional[str]
     parent_site_hierarchy_id: Optional[int]
     is_active: Optional[bool]
+
+
 # -------------------------
 # OUTPUT
 # -------------------------
@@ -20,10 +28,11 @@ class SiteHierarchyNode(BaseModel):
     parent_site_hierarchy_id: Optional[int]
     is_active: bool
     children: List["SiteHierarchyNode"] = []
-
-    model_config = {"from_attributes": True}  # important for from_orm
+    is_locked: bool = False
+    model_config = {"from_attributes": True}
 
 SiteHierarchyNode.update_forward_refs()
+
 
 class SiteHierarchyOut(SiteHierarchyNode):
     pass

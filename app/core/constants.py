@@ -1,11 +1,5 @@
 from pathlib import Path
 import os
-
-CAM_LOCATION_TYPES = {
-    1: "Low light area",
-    2: "Medium light area", 
-    3: "Bright light area", 
-}
  
 USER_ROLES = { 
     1: "Admin", 

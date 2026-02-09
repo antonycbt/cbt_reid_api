@@ -2,6 +2,7 @@ from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 
 from app.db.session import SessionLocal
+from sqlalchemy.orm import Session
 from app.repositories.site_hierarchy_repo import SiteHierarchyRepository
 from app.schemas.site_hierarchy import ( 
     SiteHierarchyUpdate,
@@ -14,39 +15,29 @@ class SiteHierarchyService:
 
     # CREATE site hierarchy
     @staticmethod
-    def create_site_hierarchy(payload):
-        db = SessionLocal()
-        try:
-            if SiteHierarchyRepository.exists_with_name(
-                db,
-                payload.name,
-                payload.parent_site_hierarchy_id,
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Site name already exists under this parent"
-                )
+    def create_site_hierarchy(db: Session, payload):
+        if SiteHierarchyRepository.exists_with_name(
+            db,
+            payload.name,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Site name already exists",
+            )
 
-            return SiteHierarchyRepository.create(db, payload)
+        return SiteHierarchyRepository.create(db, payload)
 
-        finally:
-            db.close()
-
-    @staticmethod 
+    @staticmethod
     def update_site_hierarchy(
+        db: Session,
         site_hierarchy_id: int,
         payload: SiteHierarchyUpdate,
     ):
-        db = SessionLocal()
-        try:
-            site = SiteHierarchyRepository.get_by_id(db, site_hierarchy_id)
-            if not site:
-                raise HTTPException(status_code=404, detail="Site not found")
+        site = SiteHierarchyRepository.get_by_id(db, site_hierarchy_id)
+        if not site:
+            raise HTTPException(status_code=404, detail="Site not found")
 
-            return SiteHierarchyRepository.update(db, site, payload)
-
-        finally:
-            db.close()
+        return SiteHierarchyRepository.update(db, site, payload)
 
     # GET site hierarchy by ID
     @staticmethod
@@ -130,8 +121,7 @@ class SiteHierarchyService:
                     {
                         "id": cam.id,
                         "name": cam.name,
-                        "ip_address": cam.ip_address,
-                        "location_type": cam.location_type,
+                        "ip_address": cam.ip_address, 
                         "is_active": cam.is_active,
                     }
                     for cam in getattr(loc, "cameras", []) or []
