@@ -118,33 +118,16 @@ class AccessGroupService:
                 .subquery()
             )
 
-            query = query.filter(~AccessGroup.id.in_(linked_ids))
+            query = query.filter(~AccessGroup.id.in_(linked_ids), AccessGroup.is_active.is_(True))
 
-            return query.all()
+            return query.all() 
         
-    @staticmethod
-    def list_unlinked_access_groups_by_member(
-        db: Session,
-        member_id: int | None = None,
-    ):
-        query = db.query(AccessGroup).order_by(AccessGroup.id)
-
-        if member_id:
-            linked_ids = (
-                db.query(member_access.c.access_group_id)
-                .filter(member_access.c.member_id == member_id)
-                .subquery()
-            )
-
-            query = query.filter(~AccessGroup.id.in_(linked_ids))
-
-            return query.all()
     @staticmethod
     def list_unlinked_access_groups_by_site_location(
         db: Session,
         site_location_id: int | None = None,
     ):
-        query = db.query(AccessGroup).order_by(AccessGroup.id)
+        query = db.query(AccessGroup).order_by(AccessGroup.id, AccessGroup.is_active.is_(True))
 
         if site_location_id:
             linked_ids = (

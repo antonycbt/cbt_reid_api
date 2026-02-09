@@ -11,15 +11,13 @@ from app.core.constants import USER_ROLES
 router = APIRouter()
 
 # GET user roles
-@router.get("/roles", response_model=MessageResponse[List[dict]])
-def get_user_roles():
-    roles_list = [{"id": k, "name": v} for k, v in USER_ROLES.items()]
+@router.get("/roles", response_model=MessageResponse[dict])
+def get_user_roles(): 
     return {
         "message": "Roles fetched successfully",
-        "data": roles_list
-    }
-
-
+        "data": USER_ROLES
+    }  
+   
 #CREATE user
 @router.post("", response_model=MessageResponse[UserOut])
 def create_user(payload: UserCreate):

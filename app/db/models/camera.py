@@ -14,14 +14,7 @@ class Camera(Base):
         Integer,
         ForeignKey("site_locations.id", ondelete="CASCADE"),
         nullable=False
-    )
-
-    # 1 = low light, 2 = high traffic
-    location_type = Column(
-        Integer,
-        nullable=False,
-        server_default="1"
-    )
+    ) 
 
     is_active = Column(
         Boolean,
@@ -29,9 +22,15 @@ class Camera(Base):
         server_default="true"
     )
 
-    # bidirectional relationship
-    site_location = relationship(
+    # rename relationship
+    site_location_rel = relationship(
         "SiteLocation",
         back_populates="cameras"
     )
 
+    # computed string property
+    @property
+    def site_location(self) -> str | None:
+        if self.site_location_rel and self.site_location_rel.site_hierarchy:
+            return self.site_location_rel.site_hierarchy.name
+        return None
