@@ -91,10 +91,11 @@ class SiteLocationAccessRepository:
             db.query(SiteLocation)
             .options(
                 joinedload(SiteLocation.access_groups),
-                with_loader_criteria(AccessGroup, AccessGroup.is_active.is_(True))
+                joinedload(SiteLocation.site_hierarchy),  # 👈 add this
+                with_loader_criteria(AccessGroup, AccessGroup.is_active.is_(True)),
             )
             .filter(SiteLocation.is_active.is_(True))
-        )
+        ) 
 
         if search:
             query = query.filter(SiteLocation.name.ilike(f"%{search}%"))
@@ -107,7 +108,7 @@ class SiteLocationAccessRepository:
         for loc in locations:
             result.append({
                 "site_location_id": loc.id,
-                "site_location_name": loc.name,
+                "site_location_name": loc.site_hierarchy.name if loc.site_hierarchy else None,
                 "access_groups": [{"id": ag.id, "name": ag.name} for ag in loc.access_groups]
             })
 
