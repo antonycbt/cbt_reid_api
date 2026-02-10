@@ -37,3 +37,5 @@ build/
 
 # Alembic (optional - keep migrations if you want)
 # alembic/versions/*.pyc
+
+crops/

@@ -36,3 +36,7 @@ class SiteLocation(Base):
         back_populates="site_location_rel",
         lazy="selectin"
     )
+
+    @property
+    def name(self) -> str | None:
+        return self.site_hierarchy.name if self.site_hierarchy else None

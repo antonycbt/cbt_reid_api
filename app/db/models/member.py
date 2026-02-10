@@ -12,7 +12,7 @@ class Member(Base):
     member_number = Column(String(16), nullable=False, unique=True)
 
     first_name = Column(String(64), nullable=False)
-    last_name = Column(String(64), nullable=False)
+    last_name = Column(String(64), nullable=True)
 
     department_id = Column(
         Integer,

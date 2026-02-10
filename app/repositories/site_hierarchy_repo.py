@@ -63,8 +63,7 @@ class SiteHierarchyRepository:
             ).first()
 
             if not existing_location:
-                location = SiteLocation(
-                    name=site.name,
+                location = SiteLocation( 
                     site_hierarchy_id=site.id,
                     is_active=True,
                 )

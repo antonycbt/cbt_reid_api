@@ -206,7 +206,7 @@ class SiteLocationService:
         def serialize(node):
             return {
                 "id": node.id,
-                "name": node.name,
+                "name": node.site_hierarchy.name if node.site_hierarchy else None,
                 "site_hierarchy": {
                     "id": node.site_hierarchy.id,
                     "name": node.site_hierarchy.name,

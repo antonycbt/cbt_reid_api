@@ -1,21 +1,31 @@
 # camera_repo.py
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from app.db.models import Camera, SiteLocation
 from app.schemas.camera import CameraCreate, CameraUpdate
-
+from fastapi import HTTPException
 class CameraRepository:
 
     @staticmethod
     def create(db: Session, payload: CameraCreate) -> Camera:
+        existing = db.execute(
+            select(Camera.id).where(Camera.ip_address == payload.ip_address)
+        ).first() 
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail="Camera with this IP address already exists",
+            )
+
         camera = Camera(
             name=payload.name,
             ip_address=payload.ip_address,
-            site_location_id=payload.site_location_id, 
+            site_location_id=payload.site_location_id,
         )
+
         db.add(camera)
         db.commit()
-        db.refresh(camera)  # eager-load after commit
+        db.refresh(camera)
         return camera
 
     @staticmethod
@@ -44,9 +54,14 @@ class CameraRepository:
                 joinedload(Camera.site_location_rel)
                 .joinedload(SiteLocation.site_hierarchy)
             )
-        ) 
+        )  
         if search:
-            stmt = stmt.filter(Camera.name.ilike(f"%{search}%"))
+            stmt = stmt.filter(
+                or_(
+                    Camera.name.ilike(f"%{search}%"),
+                    Camera.ip_address.ilike(f"%{search}%"),
+                )
+            )
 
         total = stmt.count()
 
@@ -59,15 +74,33 @@ class CameraRepository:
 
         return cameras, total
 
-
     @staticmethod
     def update(db: Session, camera: Camera, payload: CameraUpdate) -> Camera:
-        for field, value in payload.model_dump(exclude_unset=True).items():
-            setattr(camera, field, value)
-        db.commit()
-        db.refresh(camera)  # reload relationships for response
-        return camera
+        data = payload.model_dump(exclude_unset=True)
 
+        # check duplicate IP only if ip_address is being updated
+        if "ip_address" in data:
+            existing = db.execute(
+                select(Camera.id).where(
+                    Camera.ip_address == data["ip_address"],
+                    Camera.id != camera.id,  # exclude current camera
+                )
+            ).first()
+
+            if existing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Camera with this IP address already exists",
+                )
+
+        # apply updates
+        for field, value in data.items():
+            setattr(camera, field, value)
+
+        db.commit()
+        db.refresh(camera)
+        return camera 
+    
     @staticmethod
     def delete(db: Session, camera: Camera) -> None:
         db.delete(camera)
