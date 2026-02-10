@@ -12,6 +12,7 @@ from app.schemas.common import MessageResponse
 from app.db.session import get_db
 from app.db.models.site_hierarchy import SiteHierarchy
 from app.services.site_hierarchy_service import SiteHierarchyService
+from sqlalchemy import exists, and_
 
 router = APIRouter()
 
@@ -60,7 +61,9 @@ def build_tree_with_lock(
         pyd.is_locked = bool(getattr(node, "_is_locked", False))
         return pyd
 
-    return [orm_to_pydantic(root) for root in roots]  
+    return [orm_to_pydantic(root) for root in roots] 
+
+# ---------------- ROUTE ----------------
 
 @router.get("/tree", response_model=List[SiteHierarchyNode])
 def get_site_hierarchy_tree(db: Session = Depends(get_db)):
@@ -97,14 +100,21 @@ def list_site_hierarchies(
     page_size: int = Query(10, ge=1, le=1000),
     db: Session = Depends(get_db)
 ):
-    query = db.query(SiteHierarchy)
+    used_by_camera = exists().where(
+        and_(
+            Camera.site_location_id == SiteLocation.id,
+            SiteLocation.site_hierarchy_id == SiteHierarchy.id,
+        )
+    )
+
+    query = db.query(SiteHierarchy).filter(~used_by_camera)
+
     if search:
         query = query.filter(SiteHierarchy.name.ilike(f"%{search}%"))
 
     total = query.count()
     sites = query.offset(page * page_size).limit(page_size).all()
 
-    # prevent lazy loading children errors
     for site in sites:
         site.children = []
 
@@ -169,20 +179,42 @@ def update_site_hierarchy(
 # DELETE
 @router.delete("/{site_hierarchy_id}", response_model=MessageResponse[None])
 def delete_site_hierarchy(site_hierarchy_id: int, db: Session = Depends(get_db)):
-    site = db.query(SiteHierarchy).filter(SiteHierarchy.id == site_hierarchy_id).first()
+
+    site = db.query(SiteHierarchy).filter(
+        SiteHierarchy.id == site_hierarchy_id
+    ).first()
+
     if not site:
         raise HTTPException(status_code=404, detail="Site hierarchy not found")
 
-    # Recursive function to delete children
-    def delete_children(site: SiteHierarchy):
-        for child in site.children:  # assuming you have a relationship 'children'
-            delete_children(child)
-            db.delete(child)
+    # find related site locations
+    locations = db.query(SiteLocation).filter(
+        SiteLocation.site_hierarchy_id == site_hierarchy_id
+    ).all()
 
-    delete_children(site)
+    location_ids = [l.id for l in locations]
+
+    # check if any location used in camera
+    in_use = db.query(Camera.id).filter(
+        Camera.site_location_id.in_(location_ids)
+    ).first()
+
+    if in_use:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete. Site hierarchy is used by a camera."
+        )
+
+    # delete locations via ORM (important)
+    for loc in locations:
+        db.delete(loc)
+
+    # delete hierarchy
     db.delete(site)
+
     db.commit()
-    return {"message": "Site hierarchy and its children deleted permanently"}
+
+    return {"message": "Site hierarchy deleted successfully"}
 
 @router.get("/full_tree/{site_hierarchy_id}", response_model=MessageResponse[List[dict]])
 def get_full_hierarchy_tree(site_hierarchy_id: int):

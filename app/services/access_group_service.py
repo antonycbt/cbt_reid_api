@@ -127,7 +127,7 @@ class AccessGroupService:
         db: Session,
         site_location_id: int | None = None,
     ):
-        query = db.query(AccessGroup).order_by(AccessGroup.id, AccessGroup.is_active.is_(True))
+        query = db.query(AccessGroup).order_by(AccessGroup.id)
 
         if site_location_id:
             linked_ids = (
@@ -136,6 +136,6 @@ class AccessGroupService:
                 .subquery()
             )
 
-            query = query.filter(~AccessGroup.id.in_(linked_ids))
+            query = query.filter(~AccessGroup.id.in_(linked_ids), AccessGroup.is_active.is_(True))
 
             return query.all()

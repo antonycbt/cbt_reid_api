@@ -51,7 +51,7 @@ def create_camera(payload: CameraCreate, db: Session = Depends(get_db)):
     # reload with relationship eager loaded
     camera = (
         db.query(Camera)
-        .options(joinedload(Camera.site_location))
+        .options(joinedload(Camera.site_location_rel))
         .filter(Camera.id == camera.id)
         .first()
     )
@@ -63,7 +63,7 @@ def create_camera(payload: CameraCreate, db: Session = Depends(get_db)):
 def get_camera(camera_id: int, db: Session = Depends(get_db)):
     camera = (
         db.query(Camera)
-        .options(joinedload(Camera.site_location))
+        .options(joinedload(Camera.site_location_rel))
         .filter(Camera.id == camera_id)
         .first()
     )
