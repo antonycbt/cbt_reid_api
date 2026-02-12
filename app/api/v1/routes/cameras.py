@@ -10,10 +10,50 @@ from app.schemas.camera import (
 from app.schemas.common import MessageResponse
 from app.services.camera_service import CameraService
 from app.db.session import get_db
-from app.db.models.camera import Camera 
+from app.db.models import Camera, SiteHierarchy 
 from app.db.models.site_location import SiteLocation 
-
+from sqlalchemy import or_
 router = APIRouter()
+
+@router.get("/search", response_model=MessageResponse[list[dict]])
+def search_cameras(
+    search: str | None = Query(None, description="Search by camera or site location"),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    query = (
+        db.query(Camera)
+        .join(Camera.site_location_rel)
+        .join(SiteLocation.site_hierarchy)
+        .filter(Camera.is_active == True)
+    )
+
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            or_(
+                Camera.name.ilike(like),
+                Camera.ip_address.ilike(like),
+                SiteHierarchy.name.ilike(like),
+            )
+        )
+
+    cameras = query.order_by(Camera.name).limit(limit).all()
+
+    data = [
+        {
+            "id": cam.id,
+            "name": cam.name,
+            "ip_address": cam.ip_address,
+            "site_location": cam.site_location,  # uses computed property
+        }
+        for cam in cameras
+    ]
+
+    return {
+        "message": "Camera search results fetched successfully",
+        "data": data,
+    }
 
 # FETCH all active cameras
 @router.get("/allcameras", response_model=MessageResponse[list[dict]])
