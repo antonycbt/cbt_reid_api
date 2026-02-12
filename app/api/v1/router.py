@@ -12,10 +12,10 @@ from app.api.v1.routes import (
     member_access,
     embeddings,
     auth,
-)
-
-v1_router = APIRouter(prefix="/v1")
-
+    tracking
+) 
+v1_router = APIRouter(prefix="/v1") 
+v1_router.include_router(tracking.router, tags=["tracking"]) 
 v1_router.include_router(health.router, tags=["Health"])
 v1_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 v1_router.include_router(users.router, prefix="/users", tags=["Users"])

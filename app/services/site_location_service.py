@@ -210,8 +210,7 @@ class SiteLocationService:
                 "site_hierarchy": {
                     "id": node.site_hierarchy.id,
                     "name": node.site_hierarchy.name,
-                } if node.site_hierarchy else None,
-                "parent_site_location_id": node.parent_site_location_id,
+                } if node.site_hierarchy else None, 
                 "is_public": node.is_public,
                 "is_active": node.is_active,
                 "cameras": [
