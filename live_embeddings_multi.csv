@@ -1,0 +1,1 @@
+member_id,member_name,ts,camera_id,frame_idx,det_idx,x1,y1,x2,y2,conf_or_score,body_embedding,face_embedding,crop_path,kind

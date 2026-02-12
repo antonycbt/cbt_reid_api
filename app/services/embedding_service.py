@@ -531,11 +531,11 @@ def _progress_set(member_id: int, camera_id: int, **kv) -> None:
 
         if stage.startswith("embedding_") and work_total > 0:
             pct = int(round((work_done / max(1, work_total)) * 100))
-        elif stage == "embedding_body" and tb > 0:
+        elif stage == "Body embeddings" and tb > 0:
             pct = int(round((db_ / max(1, tb)) * 100))
-        elif stage == "embedding_face" and tf > 0:
+        elif stage == "Face embeddings" and tf > 0:
             pct = int(round((df_ / max(1, tf)) * 100))
-        elif stage in ("embedding_back_body", "embedding_back") and tbb > 0:
+        elif stage in ("Back body embeddings", "embedding_back") and tbb > 0:
             pct = int(round((dbb / max(1, tbb)) * 100))
         else:
             tot = max(1, tb + tf + tbb)
@@ -2065,7 +2065,7 @@ def _update_db_embeddings(
 def _extract_worker(member_id: int, member_name: str, camera_id: int):
     try:
         _progress_reset(member_id, member_name, camera_id)
-        _progress_set(member_id, camera_id, stage="scanning", message="Counting images...")
+        _progress_set(member_id, camera_id, stage="Scanning", message="Counting images...")
         total_body, total_face, total_back = _count_images(member_id, camera_id, member_name)
 
         if total_body + total_face + total_back == 0:
@@ -2076,7 +2076,7 @@ def _extract_worker(member_id: int, member_name: str, camera_id: int):
                 total_face=0,
                 total_back_body=0,
                 percent=100,
-                stage="done",
+                stage="Done",
                 message="No images to process",
             )
             return
@@ -2100,7 +2100,7 @@ def _extract_worker(member_id: int, member_name: str, camera_id: int):
             _progress_set(
                 member_id,
                 camera_id,
-                stage="embedding_body",
+                stage="Body embeddings",
                 message=f"Processing body ({total_body})",
                 work_total=int(total_body * units_per),
                 work_done=0,
@@ -2127,7 +2127,7 @@ def _extract_worker(member_id: int, member_name: str, camera_id: int):
             _progress_set(
                 member_id,
                 camera_id,
-                stage="embedding_face",
+                stage="Face embeddings",
                 message=f"Processing face ({total_face})",
                 work_total=int(total_face * units_per),
                 work_done=0,
@@ -2155,7 +2155,7 @@ def _extract_worker(member_id: int, member_name: str, camera_id: int):
             _progress_set(
                 member_id,
                 camera_id,
-                stage="embedding_back_body",
+                stage="Back body embeddings",
                 message=f"Processing back-body ({total_back})",
                 work_total=int(total_back * units_per),
                 work_done=0,
@@ -2186,7 +2186,7 @@ def _extract_worker(member_id: int, member_name: str, camera_id: int):
             back_body_bank=back_bank,
         )
         status = str(res.get("status", "unknown"))
-        _progress_set(member_id, camera_id, stage="done", message=("Embeddings saved" if status == "ok" else status), percent=100)
+        _progress_set(member_id, camera_id, stage="Done", message=("Embeddings saved" if status == "ok" else status), percent=100)
 
     except Exception as e:
         logger.exception("extract worker failed")
@@ -2199,7 +2199,7 @@ def _extract_worker_multi(member_id: int, member_name: str, camera_ids: List[int
         return
 
     _progress_reset(member_id, member_name, OVERALL_CAMERA_ID)
-    _progress_set(member_id, OVERALL_CAMERA_ID, stage="starting", message=f"Processing {len(camera_ids)} camera(s)", percent=0)
+    _progress_set(member_id, OVERALL_CAMERA_ID, stage="Starting", message=f"Processing {len(camera_ids)} camera(s)", percent=0)
 
     done = 0
     total = max(1, len(camera_ids))
@@ -2210,7 +2210,7 @@ def _extract_worker_multi(member_id: int, member_name: str, camera_ids: List[int
         done += 1
         _progress_set(member_id, OVERALL_CAMERA_ID, percent=int(round((done / total) * 100)))
 
-    _progress_set(member_id, OVERALL_CAMERA_ID, stage="done", message="All cameras processed", percent=100)
+    _progress_set(member_id, OVERALL_CAMERA_ID, stage="Done", message="All cameras processed", percent=100)
 
 
 def extract_embeddings_async(member_id: int, camera_ids: Optional[Any] = None) -> Dict[str, object]:
@@ -2296,7 +2296,7 @@ def extract_embeddings_sync(member_id: int, camera_ids: Optional[Any] = None) ->
         _extract_worker(int(member_id), member_name, int(cid))
         results[int(cid)] = get_progress_for_member(int(member_id), int(cid))
 
-    return {"status": "done", "member_id": int(member_id), "member_name": member_name, "cameras": results}
+    return {"status": "Done", "member_id": int(member_id), "member_name": member_name, "cameras": results}
 
 
 # ===================== Control API =====================
@@ -2373,7 +2373,7 @@ def start_extraction(member_id: int, camera_ids: Optional[Any] = None, show_view
     current_camera_streams = {cid: streams_map[cid] for cid in selected_ids}
 
     _progress_reset(int(member_id), member_name, OVERALL_CAMERA_ID)
-    _progress_set(int(member_id), OVERALL_CAMERA_ID, stage="starting", message="initializing", percent=0)
+    _progress_set(int(member_id), OVERALL_CAMERA_ID, stage="Starting", message="initializing", percent=0)
 
     start_workers_if_needed()
 
@@ -2508,7 +2508,7 @@ def stop_extraction(reason: str = "user") -> dict:
             ).start()
             logger.info("Auto-extract triggered for member_id=%s cameras=%s after stop.", mid_snapshot, cams_snapshot)
 
-        return {"status": "ok", "message": f"stopped ({reason})", "member_id": mid_snapshot, "camera_ids": cams_snapshot}
+        return {"status": "ok", "message": f"Stopped capturing ", "member_id": mid_snapshot, "camera_ids": cams_snapshot}
     finally:
         current_member_id = None
         current_member_name = None
