@@ -1,6 +1,6 @@
 # camera_repo.py
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, or_
 from app.db.models import Camera, SiteLocation
 from app.schemas.camera import CameraCreate, CameraUpdate
 from fastapi import HTTPException

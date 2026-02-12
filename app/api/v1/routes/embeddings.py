@@ -6,11 +6,7 @@ from typing import Optional, List, Dict, Any
 from app.services import embedding_service
 from app.schemas import embedding
 
-router = APIRouter()
-
-
-
-
+router = APIRouter() 
 
 @router.post("/start", response_model=embedding.StartResponse)
 def start(req: embedding.StartRequest) -> embedding.StartResponse:
