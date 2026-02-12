@@ -37,8 +37,7 @@ def upgrade() -> None:
     )
     op.create_index('ix_norm_guest_movement_ts', 'normalized_data', ['guest_temp_id', 'movement_ts'], unique=False)
     op.create_index('ix_norm_member_movement_ts', 'normalized_data', ['member_id', 'movement_ts'], unique=False)
-    op.create_index(op.f('ix_normalized_data_id'), 'normalized_data', ['id'], unique=False)
-    op.drop_table('raw_data_sample')
+    op.create_index(op.f('ix_normalized_data_id'), 'normalized_data', ['id'], unique=False) 
     # ### end Alembic commands ###
 
 

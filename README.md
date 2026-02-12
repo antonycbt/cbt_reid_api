@@ -9,7 +9,7 @@
     python -m alembic init alembic
 
 # run app
-    uvicorn app.main:app --reload    or  uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload 
+    uvicorn app.main:app --reload    or  uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --workers 1 
 
 # alembic migration
     1. python -m alembic revision --autogenerate -m "migration message"
@@ -17,4 +17,13 @@
 
 # pip install -r requirements.txt   
 # pip install wheel cython setuptools --upgrade
+# pip install torch==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cu128
+
+# python -m pip install numpy
 # pip install --no-build-isolation git+https://github.com/KaiyangZhou/deep-person-reid.git
+
+New DB
+------------------------------------------------------
+alembic stamp base
+alembic revision --autogenerate -m "initial tables"
+alembic upgrade head

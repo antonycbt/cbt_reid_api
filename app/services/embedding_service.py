@@ -137,7 +137,7 @@ RAW_STORE_LIMIT = int(os.getenv("RAW_STORE_LIMIT", "256"))
 
 USE_FACE = True
 FACE_MODEL = "buffalo_l"
-FACE_DET_SIZE = (640, 640)
+FACE_DET_SIZE = (1280, 1280)
 FACE_PROVIDER = "auto"
 FACE_MIN_SCORE = 0.5
 FACE_MIN_SIZE = 32
@@ -145,7 +145,7 @@ FACE_IOU_LINK = 0.05
 FACE_OVER_FACE_LINK = 0.60
 FACE_EVERY = int(os.getenv("FACE_EVERY", "2"))
 
-YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "640"))
+YOLO_IMGSZ = int(os.getenv("YOLO_IMGSZ", "1280"))
 
 CAP_QUEUE_MAX = int(os.getenv("CAP_QUEUE_MAX", "2"))
 IO_QUEUE_MAX = int(os.getenv("IO_QUEUE_MAX", "1024"))
