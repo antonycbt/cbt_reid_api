@@ -7,7 +7,7 @@ from app.schemas.access_group import (
     AccessGroupUpdate,
 ) 
 from sqlalchemy.orm import Session, selectinload
-from app.db.models import AccessGroup 
+from app.db.models import AccessGroup,Member 
 from app.db.models.associations import member_access, site_location_access
 
 
@@ -105,37 +105,22 @@ class AccessGroupService:
             db.close()
 
     @staticmethod
-    def list_unlinked_access_groups_by_member(
-        db: Session,
-        member_id: int | None = None,
+    def list_unlinked_members_by_access_groups(
+    db: Session,
+    access_group_id: int | None = None,
     ):
-        query = db.query(AccessGroup).order_by(AccessGroup.id)
+        query = db.query(Member).order_by(Member.id)
 
-        if member_id:
+        if access_group_id:
             linked_ids = (
-                db.query(member_access.c.access_group_id)
-                .filter(member_access.c.member_id == member_id)
+                db.query(member_access.c.member_id)
+                .filter(member_access.c.access_group_id == access_group_id)
                 .subquery()
             )
 
-            query = query.filter(~AccessGroup.id.in_(linked_ids), AccessGroup.is_active.is_(True))
-
-            return query.all() 
-        
-    @staticmethod
-    def list_unlinked_access_groups_by_site_location(
-        db: Session,
-        site_location_id: int | None = None,
-    ):
-        query = db.query(AccessGroup).order_by(AccessGroup.id)
-
-        if site_location_id:
-            linked_ids = (
-                db.query(site_location_access.c.access_group_id)
-                .filter(site_location_access.c.site_location_id == site_location_id)
-                .subquery()
+            query = query.filter(
+                ~Member.id.in_(linked_ids),
+                Member.is_active.is_(True),
             )
 
-            query = query.filter(~AccessGroup.id.in_(linked_ids), AccessGroup.is_active.is_(True))
-
-            return query.all()
+        return query.all() 

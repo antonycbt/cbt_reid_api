@@ -14,8 +14,8 @@ class MemberAccessCreate(BaseModel):
 # BULK CREATE
 # -------------------------
 class MemberAccessBulkCreate(BaseModel):
-    member_id: int
-    access_group_ids: list[int]
+    access_group_id: int
+    member_ids: List[int]
 
 # -------------------------
 # UPDATE
