@@ -3,7 +3,7 @@ from sqlalchemy import select, insert, delete, func
 from app.db.models.associations import site_location_access
 from sqlalchemy.orm import joinedload, with_loader_criteria
 from app.db.models import SiteLocation, AccessGroup
-
+from typing import List, Set
 class SiteLocationAccessRepository:
 
     # -------- CREATE (single) --------
@@ -36,30 +36,29 @@ class SiteLocationAccessRepository:
 
     # -------- BULK CREATE --------
     @staticmethod
-    def bulk_create(
+    def bulk_create_for_access_group(
         db: Session,
-        site_location_id: int,
-        access_group_ids: list[int],
+        access_group_id: int,
+        site_location_ids: List[int],
     ) -> int:
-        # find existing access groups
-        existing_stmt = select(
-            site_location_access.c.access_group_id
-        ).where(
-            site_location_access.c.site_location_id == site_location_id,
-            site_location_access.c.access_group_id.in_(access_group_ids),
+
+        if not site_location_ids:
+            return 0
+
+        existing_stmt = select(site_location_access.c.site_location_id).where(
+            site_location_access.c.access_group_id == access_group_id,
+            site_location_access.c.site_location_id.in_(site_location_ids),
         )
 
-        existing_ids = {
-            row[0] for row in db.execute(existing_stmt).all()
-        }
+        existing_ids: Set[int] = {row[0] for row in db.execute(existing_stmt).all()}
 
         new_rows = [
             {
-                "site_location_id": site_location_id,
-                "access_group_id": ag_id,
+                "site_location_id": sl_id,
+                "access_group_id": access_group_id,
             }
-            for ag_id in access_group_ids
-            if ag_id not in existing_ids
+            for sl_id in site_location_ids
+            if sl_id not in existing_ids
         ]
 
         if not new_rows:

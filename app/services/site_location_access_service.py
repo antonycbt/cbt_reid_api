@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal, get_db
 from app.repositories.site_location_access_repo import SiteLocationAccessRepository
 from app.schemas.site_location_access import SiteLocationAccessCreate, SiteLocationAccessBulkCreate
+from app.db.models.site_location import SiteLocation, site_location_access
+from typing import Optional, List
 
 class SiteLocationAccessService:
 
@@ -35,19 +37,46 @@ class SiteLocationAccessService:
     def bulk_assign_access(payload: SiteLocationAccessBulkCreate):
         db: Session = SessionLocal()
         try:
-            created_count = SiteLocationAccessRepository.bulk_create(
-                db, payload.site_location_id, payload.access_group_ids
+            if not payload.site_location_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="site_location_ids cannot be empty",
+                )
+
+            created_count = SiteLocationAccessRepository.bulk_create_for_access_group(
+                db,
+                payload.access_group_id,
+                payload.site_location_ids,
             )
 
             if created_count == 0:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="All selected access groups are already assigned",
+                    detail="All selected site locations are already assigned",
                 )
 
-            return {"site_location_id": payload.site_location_id, "created_count": created_count}
+            return {
+                "access_group_id": payload.access_group_id,
+                "created_count": created_count,
+            }
+
         finally:
             db.close()
+
+    @staticmethod
+    def list_unlinked_site_locations_by_access_group(db: Session, access_group_id: Optional[int] = None) -> List[SiteLocation]:
+        query = db.query(SiteLocation).order_by(SiteLocation.id)
+
+        if access_group_id:
+            linked_ids = (
+                db.query(site_location_access.c.site_location_id)
+                .filter(site_location_access.c.access_group_id == access_group_id)
+                .subquery()
+            )
+            query = query.filter(~SiteLocation.id.in_(linked_ids), SiteLocation.is_active.is_(True))
+
+        return query.all()
+        
 
     # -------- LIST --------
     @staticmethod

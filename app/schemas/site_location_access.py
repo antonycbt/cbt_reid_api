@@ -14,9 +14,8 @@ class SiteLocationAccessCreate(BaseModel):
 # BULK CREATE
 # -------------------------
 class SiteLocationAccessBulkCreate(BaseModel):
-    site_location_id: int
-    access_group_ids: List[int]
-
+    access_group_id: int
+    site_location_ids: List[int]
 
 # -------------------------
 # UPDATE

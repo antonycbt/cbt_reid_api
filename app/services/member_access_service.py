@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from app.db.session import SessionLocal, get_db
 from app.repositories.member_access_repo import MemberAccessRepository
 from app.schemas.member_access import MemberAccessCreate, MemberAccessBulkCreate
-
+from app.db.models.member import member_access
 class MemberAccessService:
 
     # -------- SINGLE CREATE --------
@@ -30,24 +30,44 @@ class MemberAccessService:
         finally:
             db.close()
 
-    # -------- BULK ASSIGN --------
     @staticmethod
     def bulk_assign_access(payload: MemberAccessBulkCreate):
         db: Session = SessionLocal()
         try:
-            created_count = MemberAccessRepository.bulk_create(
-                db, payload.member_id, payload.access_group_ids
+            created_count = 0
+
+            # find already linked members
+            existing = (
+                db.query(member_access.c.member_id)
+                .filter(member_access.c.access_group_id == payload.access_group_id)
+                .filter(member_access.c.member_id.in_(payload.member_ids))
+                .all()
             )
 
-            if created_count == 0:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="All selected access groups are already assigned",
-                )
+            existing_ids = {e[0] for e in existing}
 
-            return {"member_id": payload.member_id, "created_count": created_count}
+            to_insert = [
+                {
+                    "member_id": mid,
+                    "access_group_id": payload.access_group_id,
+                }
+                for mid in payload.member_ids
+                if mid not in existing_ids
+            ]
+
+            if to_insert:
+                db.execute(member_access.insert(), to_insert)
+                db.commit()
+                created_count = len(to_insert)
+
+            return {
+                "access_group_id": payload.access_group_id,
+                "created_count": created_count,
+            }
+
         finally:
             db.close()
+
 
     # -------- LIST --------
     @staticmethod

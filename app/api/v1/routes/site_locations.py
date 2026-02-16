@@ -10,10 +10,30 @@ from app.schemas.site_location import (
 )
 from app.schemas.common import MessageResponse
 from app.services.site_location_service import SiteLocationService
+from app.services.site_location_access_service import SiteLocationAccessService
 from app.db.session import get_db
 
 router = APIRouter()
 
+
+@router.get(
+    "/list_unlinked_site_locations_by_access_group",
+    response_model=MessageResponse[List[SiteLocationOut]],
+)
+def list_unlinked_site_locations_by_access_group(
+    access_group_id: Optional[int] = Query(None, description="Filter out linked site locations"),
+    db: Session = Depends(get_db),
+):
+    """
+    Return site locations that are NOT linked to the given access_group_id.
+    IMPORTANT: must be defined before the dynamic /{site_location_id} route to avoid route collisions.
+    """
+    site_locations = SiteLocationAccessService.list_unlinked_site_locations_by_access_group(db, access_group_id)
+    return {
+        "message": "Site locations fetched successfully",
+        "data": site_locations,
+        "total": len(site_locations),
+    }
 
 # ---------------- TREE ----------------
 @router.get("/tree", response_model=MessageResponse[List[SiteLocationTreeOut]])

@@ -91,7 +91,9 @@ class MemberAccessRepository:
 
         result = []
         for member in members:
-            full_name = f"{member.first_name} {member.last_name}".strip()
+            full_name = " ".join(
+                part for part in [member.first_name, member.last_name] if part
+            )
 
             result.append({
                 "member_id": member.id,
@@ -100,6 +102,7 @@ class MemberAccessRepository:
                     {"id": ag.id, "name": ag.name} for ag in member.access_groups
                 ],
             })
+
 
         return result, total
 
