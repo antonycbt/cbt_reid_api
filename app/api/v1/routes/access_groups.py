@@ -1,11 +1,12 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
 from app.schemas.access_group import (
     AccessGroupCreate,
     AccessGroupUpdate,
-    AccessGroupOut
+    AccessGroupOut,
+    AccessGroupNode
 )
 from app.schemas.member import (
     MemberOut
@@ -13,11 +14,28 @@ from app.schemas.member import (
 from app.services.access_group_service import AccessGroupService
 from app.schemas.common import MessageResponse
 from app.db.session import get_db
+from app.db.models import AccessGroup 
 
 router = APIRouter()
 
 
 # ---------- STATIC ROUTES FIRST ----------
+
+
+@router.get("/tree", response_model=List[AccessGroupNode])
+def get_access_group_tree(db: Session = Depends(get_db)):
+    """
+    Return nested access group tree.
+    - Fetches all access groups (flat)
+    - Builds a nested tree using parent_access_group_id
+    """
+    # load all access groups
+    all_groups: List[AccessGroup] = db.query(AccessGroup).all()
+
+    # build nested tree (plain dicts)
+    tree = build_tree_from_flat(all_groups)
+
+    return tree
 
 @router.get(
     "/list_unlinked_members_by_access_groups",
@@ -109,3 +127,33 @@ def delete_access_group(access_group_id: int):
     return {
         "message": "Access group deleted permanently",
     }
+
+def build_tree_from_flat(flat: List[AccessGroup]) -> List[Dict[str, Any]]:
+    """
+    Convert flat SQLAlchemy AccessGroup objects list into nested dict tree.
+    Returns a list of root node dicts. Each node is a plain dict suitable for
+    Pydantic serialization (matches AccessGroupNode).
+    """
+    node_map: Dict[int, Dict[str, Any]] = {}
+    roots: List[Dict[str, Any]] = []
+
+    # 1) create node_map entries
+    for r in flat:
+        node_map[r.id] = {
+            "id": r.id,
+            "name": r.name,
+            "parent_access_group_id": r.parent_access_group_id,
+            "is_active": bool(r.is_active),
+            "children": [],
+        }
+
+    # 2) link children to parents (or add to roots)
+    for r in flat:
+        node = node_map[r.id]
+        parent_id = r.parent_access_group_id
+        if parent_id is not None and parent_id in node_map:
+            node_map[parent_id]["children"].append(node)
+        else:
+            roots.append(node)
+
+    return roots
