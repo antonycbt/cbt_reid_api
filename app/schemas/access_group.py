@@ -1,6 +1,18 @@
 from pydantic import BaseModel, Field, validator
-from typing import Optional
+from typing import Optional, List
 
+
+class AccessGroupNode(BaseModel):
+    id: int
+    name: str
+    parent_access_group_id: Optional[int] = None
+    is_active: bool
+    children: List["AccessGroupNode"] = []
+
+    class Config:
+        orm_mode = True
+        
+AccessGroupNode.update_forward_refs()
 
 # -------------------------
 # CREATE
