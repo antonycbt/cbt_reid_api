@@ -4,7 +4,8 @@
 
 # install deps
     pip install -r requirements.txt
-
+# For cpu version
+    pip install -r requirementscpu.txt
 # init alembic
     python -m alembic init alembic
 
@@ -27,3 +28,5 @@ New DB
 alembic stamp base
 alembic revision --autogenerate -m "initial tables"
 alembic upgrade head
+
+

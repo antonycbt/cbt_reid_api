@@ -1,5 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query
-from typing import Optional
+import io
+import openpyxl
+from fastapi import APIRouter, HTTPException, Query ,  UploadFile, File
+from typing import Optional,List
 
 from app.schemas.member import (
     MemberCreate,
@@ -7,7 +9,7 @@ from app.schemas.member import (
     MemberOut,
 )
 from app.services.member_service import MemberService
-from app.schemas.common import MessageResponse 
+from app.schemas.common import MessageResponse,BulkImportResponse
 from typing import Optional 
 
 
@@ -64,6 +66,35 @@ def create_member(payload: MemberCreate):
 
 
 # -------------------------
+# BULK IMPORT
+# -------------------------
+
+@router.post("/bulk-import", response_model=MessageResponse[BulkImportResponse])
+async def bulk_import_members(file: UploadFile = File(...)):
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are allowed")
+
+    contents = await file.read()
+
+    try:
+        wb = openpyxl.load_workbook(filename=io.BytesIO(contents), read_only=True, data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(min_row=2, values_only=True))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse Excel file: {str(e)}")
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No data rows found in the uploaded file.")
+
+    result = MemberService.bulk_import_members_from_rows(rows)
+
+    return {
+        "message": result["message"],
+        "data": BulkImportResponse(**result),
+    }
+
+
+# -------------------------
 # GET member by ID
 # -------------------------
 @router.get("/{member_id}", response_model=MessageResponse[MemberOut])
@@ -106,4 +137,3 @@ def delete_member(member_id: int):
     return {
         "message": "Member deleted permanently",
     }
-
