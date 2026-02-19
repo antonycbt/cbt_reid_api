@@ -1,4 +1,7 @@
-from fastapi import APIRouter, HTTPException, Query, Depends
+import io
+import openpyxl
+from app.schemas.common import BulkImportResponse
+from fastapi import APIRouter, HTTPException, Query, Depends , UploadFile, File
 from typing import Optional
 from sqlalchemy.orm import Session, joinedload
 
@@ -82,6 +85,32 @@ def list_site_locations(db: Session = Depends(get_db)):
     ]
 
     return {"message": "Site locations fetched successfully", "data": data} 
+
+
+
+@router.post("/bulk-import", response_model=MessageResponse[BulkImportResponse])
+async def bulk_import_cameras(file: UploadFile = File(...)):
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are allowed")
+
+    contents = await file.read()
+
+    try:
+        wb = openpyxl.load_workbook(filename=io.BytesIO(contents), read_only=True, data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(min_row=2, values_only=True))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse Excel file: {str(e)}")
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No data rows found in the uploaded file.")
+
+    result = CameraService.bulk_import_cameras_from_rows(rows)
+
+    return {
+        "message": result["message"],
+        "data": BulkImportResponse(**result),
+    }
 
 # CREATE camera
 @router.post("", response_model=MessageResponse[CameraOut])
