@@ -69,7 +69,7 @@ def create_member(payload: MemberCreate):
 # BULK IMPORT
 # -------------------------
 
-@router.post("/bulk-import", response_model=MessageResponse[BulkImportResponse])
+@router.post("/bulk_import", response_model=MessageResponse[BulkImportResponse])
 async def bulk_import_members(file: UploadFile = File(...)):
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are allowed")

@@ -9,7 +9,7 @@ router = APIRouter()
 def login(payload: LoginRequest):
     try:
         user = AuthService.login(payload.email, payload.password)
-        return user
+        return LoginResponse.from_user(user)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
