@@ -5,6 +5,8 @@ from app.repositories.site_location_access_repo import SiteLocationAccessReposit
 from app.schemas.site_location_access import SiteLocationAccessCreate, SiteLocationAccessBulkCreate
 from app.db.models.site_location import SiteLocation, site_location_access
 from typing import Optional, List
+from app.db.models import SiteHierarchy 
+from app.repositories.site_hierarchy_repo import SiteHierarchyRepository
 
 class SiteLocationAccessService:
 
@@ -65,7 +67,20 @@ class SiteLocationAccessService:
 
     @staticmethod
     def list_unlinked_site_locations_by_access_group(db: Session, access_group_id: Optional[int] = None) -> List[SiteLocation]:
-        query = db.query(SiteLocation).order_by(SiteLocation.id)
+        fully_active_hierarchy_ids = SiteHierarchyRepository.get_fully_active_hierarchy_ids(db)
+
+        if not fully_active_hierarchy_ids:
+            return []
+
+        query = (
+            db.query(SiteLocation)
+            .join(SiteLocation.site_hierarchy)
+            .filter(
+                SiteLocation.is_active.is_(True),
+                SiteHierarchy.id.in_(fully_active_hierarchy_ids),
+            )
+            .order_by(SiteLocation.id)
+        )
 
         if access_group_id:
             linked_ids = (
@@ -73,10 +88,9 @@ class SiteLocationAccessService:
                 .filter(site_location_access.c.access_group_id == access_group_id)
                 .subquery()
             )
-            query = query.filter(~SiteLocation.id.in_(linked_ids), SiteLocation.is_active.is_(True))
+            query = query.filter(~SiteLocation.id.in_(linked_ids))
 
         return query.all()
-        
 
     # -------- LIST --------
     @staticmethod

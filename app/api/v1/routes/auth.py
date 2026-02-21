@@ -1,17 +1,15 @@
-from fastapi import APIRouter, HTTPException, status
-from app.schemas.auth import LoginRequest, LoginResponse
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from app.db.session import get_db
 from app.services.auth_service import AuthService
+from app.schemas.auth import LoginRequest, LoginResponse
 
 router = APIRouter()
 
-
-@router.post("/login", response_model=LoginResponse)
-def login(payload: LoginRequest):
+@router.post("/login")
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
     try:
-        user = AuthService.login(payload.email, payload.password)
-        return user
+        user = AuthService.login(db, payload.email, payload.password)
+        return LoginResponse.from_user(user)
     except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(e),
-        )
+        raise HTTPException(status_code=401, detail=str(e))

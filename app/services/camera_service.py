@@ -5,7 +5,10 @@ from sqlalchemy.orm import Session
 from app.repositories.camera_repo import CameraRepository
 from app.schemas.camera import CameraCreate, CameraUpdate
 from app.db.models.camera import Camera
-
+from app.repositories.site_hierarchy_repo import SiteHierarchyRepository
+from sqlalchemy import select
+from app.db.models.site_location import SiteLocation
+from app.db.models.site_hierarchy import SiteHierarchy
 class CameraService:
 
     @staticmethod
@@ -81,17 +84,22 @@ class CameraService:
 
         db = SessionLocal()
         try:
-            # ── Build site_location name → id map (only active) ──────────
-            site_location_name_to_id = CameraRepository.get_site_location_name_map(db)
-
-            # ── Get existing IPs ──────────────────────────────────────────
-            raw_ips = [
-                str(row[1]).strip() for row in rows
-                if row and row[1]
-            ]
+            fully_active_hierarchy_ids = SiteHierarchyRepository.get_fully_active_hierarchy_ids(db)
+            if fully_active_hierarchy_ids:
+                location_rows = db.execute(
+                    select(SiteLocation.id, SiteHierarchy.name)
+                    .join(SiteHierarchy, SiteHierarchy.id == SiteLocation.site_hierarchy_id)
+                    .where(
+                        SiteLocation.is_active.is_(True),
+                        SiteHierarchy.id.in_(fully_active_hierarchy_ids),
+                    )
+                ).all()
+                site_location_name_to_id = {row.name.strip().lower(): row.id for row in location_rows}
+            else:
+                site_location_name_to_id = {}
+            raw_ips = [str(row[1]).strip() for row in rows if row and row[1]]
             existing_ips = CameraRepository.get_existing_ip_addresses(db, raw_ips)
 
-            # ── Process rows ──────────────────────────────────────────────
             cameras_to_create = []
             skipped = []
 
@@ -99,11 +107,10 @@ class CameraService:
                 if not row or not row[0]:
                     continue
 
-                name           = str(row[0]).strip() if row[0] else None
-                ip_address     = str(row[1]).strip() if row[1] else None
-                site_loc_raw   = str(row[2]).strip() if row[2] else None
+                name         = str(row[0]).strip() if row[0] else None
+                ip_address   = str(row[1]).strip() if row[1] else None
+                site_loc_raw = str(row[2]).strip() if row[2] else None
 
-                # ── Required fields ───────────────────────────────────────
                 if not name or not ip_address or not site_loc_raw:
                     skipped.append({
                         "row": i,
@@ -112,7 +119,6 @@ class CameraService:
                     })
                     continue
 
-                # ── Duplicate IP check (DB) ───────────────────────────────
                 if ip_address in existing_ips:
                     skipped.append({
                         "row": i,
@@ -121,13 +127,13 @@ class CameraService:
                     })
                     continue
 
-                # ── Site location resolution ──────────────────────────────
                 site_location_id = site_location_name_to_id.get(site_loc_raw.lower())
+
                 if site_location_id is None:
                     skipped.append({
                         "row": i,
                         "name": name,
-                        "reason": f"Site location '{site_loc_raw}' does not exist or is not active",
+                        "reason": f"Site location '{site_loc_raw}' does not exist or is not active (check if any parent hierarchy is inactive)",
                     })
                     continue
 
@@ -137,18 +143,14 @@ class CameraService:
                     site_location_id=site_location_id,
                     is_active=True,
                 ))
-
-                # ── Track within-batch duplicate IPs ──────────────────────
                 existing_ips.add(ip_address)
 
-            # ── Bulk insert ───────────────────────────────────────────────
             added_count = 0
             if cameras_to_create:
                 db.add_all(cameras_to_create)
                 db.commit()
                 added_count = len(cameras_to_create)
 
-            # ── Build response ────────────────────────────────────────────
             total_skipped = len(skipped)
             message = (
                 f"{added_count} {'entry' if added_count == 1 else 'entries'} added successfully. "

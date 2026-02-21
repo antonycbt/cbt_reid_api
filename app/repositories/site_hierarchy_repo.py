@@ -6,7 +6,7 @@ from app.schemas.site_hierarchy import SiteHierarchyCreate, SiteHierarchyUpdate
 from app.db.models.site_location import SiteLocation
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
-
+from sqlalchemy import text
 class SiteHierarchyRepository: 
 
     # DUPLICATION CHECK
@@ -238,3 +238,26 @@ class SiteHierarchyRepository:
 
         stmt = stmt.order_by(SiteHierarchy.id)
         return db.execute(stmt).scalars().all()
+    
+
+    @staticmethod
+    def get_fully_active_hierarchy_ids(db: Session) -> set:
+        cte = text("""
+            WITH RECURSIVE hierarchy_check AS (
+                -- Base case: root nodes
+                SELECT id, is_active
+                FROM site_hierarchies
+                WHERE parent_site_hierarchy_id IS NULL
+
+                UNION ALL
+
+                -- Recursive: only traverse if parent is active
+                SELECT sh.id, sh.is_active
+                FROM site_hierarchies sh
+                INNER JOIN hierarchy_check hc ON sh.parent_site_hierarchy_id = hc.id
+                WHERE hc.is_active = TRUE
+            )
+            SELECT id FROM hierarchy_check WHERE is_active = TRUE
+        """)
+
+        return {row[0] for row in db.execute(cte).fetchall()}

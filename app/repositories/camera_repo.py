@@ -5,6 +5,7 @@ from sqlalchemy import select, or_
 from app.db.models import Camera, SiteLocation
 from app.schemas.camera import CameraCreate, CameraUpdate
 from fastapi import HTTPException
+from app.db.models.site_location import SiteLocation
 class CameraRepository:
 
     @staticmethod
@@ -115,20 +116,6 @@ class CameraRepository:
             )
         ).scalars().all()
         return {ip for ip in rows}
-
-    @staticmethod
-    def get_site_location_name_map(db: Session) -> Dict[str, int]:
-        from app.db.models.site_location import SiteLocation
-        from app.db.models.site_hierarchy import SiteHierarchy
-        rows = db.execute(
-            select(SiteLocation.id, SiteHierarchy.name)
-            .join(SiteHierarchy, SiteHierarchy.id == SiteLocation.site_hierarchy_id)
-            .where(
-                SiteLocation.is_active.is_(True),
-                SiteHierarchy.is_active.is_(True),   # 👈 add this
-            )
-        ).all()
-        return {row.name.strip().lower(): row.id for row in rows}
 
     @staticmethod
     def bulk_create(db: Session, cameras: List) -> List:
