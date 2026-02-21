@@ -4,7 +4,7 @@ from app.schemas.common import BulkImportResponse
 from fastapi import APIRouter, HTTPException, Query, Depends , UploadFile, File
 from typing import Optional
 from sqlalchemy.orm import Session, joinedload
-
+from app.repositories.site_hierarchy_repo import SiteHierarchyRepository
 from app.schemas.camera import (
     CameraCreate,
     CameraUpdate,
@@ -69,10 +69,19 @@ def list_active_cameras(db: Session = Depends(get_db)):
 # FETCH site locations 
 @router.get("/load_site_locations", response_model=MessageResponse[list[dict]])
 def list_site_locations(db: Session = Depends(get_db)):
+    fully_active_hierarchy_ids = SiteHierarchyRepository.get_fully_active_hierarchy_ids(db)
+
+    if not fully_active_hierarchy_ids:
+        return {"message": "Site locations fetched successfully", "data": []}
+
     locations = (
         db.query(SiteLocation)
+        .join(SiteLocation.site_hierarchy)
         .options(joinedload(SiteLocation.site_hierarchy))
-        .filter(SiteLocation.is_active.is_(True))
+        .filter(
+            SiteLocation.is_active.is_(True),
+            SiteHierarchy.id.in_(fully_active_hierarchy_ids),
+        )
         .all()
     )
 
@@ -83,8 +92,7 @@ def list_site_locations(db: Session = Depends(get_db)):
         }
         for loc in locations
     ]
-
-    return {"message": "Site locations fetched successfully", "data": data} 
+    return {"message": "Site locations fetched successfully", "data": data}
 
 
 
