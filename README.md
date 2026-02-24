@@ -27,3 +27,22 @@ New DB
 alembic stamp base
 alembic revision --autogenerate -m "initial tables"
 alembic upgrade head
+
+
+
+
+
+
+DO $$ 
+DECLARE 
+    r RECORD;
+BEGIN
+    FOR r IN 
+        SELECT tablename 
+        FROM pg_tables 
+        WHERE schemaname = 'public'
+        AND tablename LIKE 'raw_data%'
+    LOOP
+        EXECUTE 'DROP TABLE IF EXISTS public.' || quote_ident(r.tablename) || ' CASCADE';
+    END LOOP;
+END $$;

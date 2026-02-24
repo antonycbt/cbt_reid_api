@@ -15,7 +15,6 @@ from app.api.v1.routes import (
     tracking
 ) 
 v1_router = APIRouter(prefix="/v1") 
-v1_router.include_router(tracking.router, tags=["tracking"]) 
 v1_router.include_router(health.router, tags=["Health"])
 v1_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 v1_router.include_router(users.router, prefix="/users", tags=["Users"])
@@ -28,3 +27,4 @@ v1_router.include_router(members.router, prefix="/members", tags=["Members"])
 v1_router.include_router(site_location_access.router, prefix="/site_location_access", tags=["Site Location Acess"])
 v1_router.include_router(member_access.router, prefix="/member_access", tags=["Member Acess"])
 v1_router.include_router(embeddings.router, prefix="/embeddings", tags=["Embeddings"])
+v1_router.include_router(tracking.router, prefix="/tracking", tags=["tracking"]) 
