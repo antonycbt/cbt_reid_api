@@ -25,7 +25,6 @@ class SiteHierarchyRepository:
 
         return db.execute(stmt).scalars().first() is not None
     
-    # CREATE
     @staticmethod
     def create(db: Session, payload: SiteHierarchyCreate) -> SiteHierarchy:
         site = SiteHierarchy(
@@ -39,35 +38,27 @@ class SiteHierarchyRepository:
             db.flush()  # get ID before commit
 
             # -------------------------------------------------
-            # 1. If parent exists → parent is no longer leaf
-            # deactivate parent location
+            # 1. If parent exists → REMOVE it from SiteLocation
             # -------------------------------------------------
             if payload.parent_site_hierarchy_id:
-                parent_location = (
-                    db.query(SiteLocation)
-                    .filter(
-                        SiteLocation.site_hierarchy_id == payload.parent_site_hierarchy_id,
-                        SiteLocation.is_active == True
-                    )
-                    .first()
-                )
-
-                if parent_location:
-                    parent_location.is_active = False  # soft deactivate
+                db.query(SiteLocation).filter(
+                    SiteLocation.site_hierarchy_id == payload.parent_site_hierarchy_id
+                ).delete(synchronize_session=False)
 
             # -------------------------------------------------
-            # 2. New node is leaf → create its location
+            # 2. New node is leaf → create SiteLocation
             # -------------------------------------------------
-            existing_location = db.query(SiteLocation).filter(
-                SiteLocation.site_hierarchy_id == site.id
-            ).first()
+            is_protected_flag = getattr(payload, "is_protected", False)
+            is_public_flag = getattr(payload, "is_public", False)
 
-            if not existing_location:
-                location = SiteLocation( 
-                    site_hierarchy_id=site.id,
-                    is_active=True,
-                )
-                db.add(location)
+            location = SiteLocation(
+                site_hierarchy_id=site.id,
+                is_active=True,
+                is_protected=bool(is_protected_flag),
+                is_public=bool(is_public_flag),
+            )
+
+            db.add(location)
 
             db.commit()
 
@@ -84,8 +75,6 @@ class SiteHierarchyRepository:
             .filter(SiteHierarchy.id == site.id)
             .one()
         )
-
- 
 
     # GET BY ID
     @staticmethod
@@ -117,7 +106,6 @@ class SiteHierarchyRepository:
             elif not location.is_active:
                 location.is_active = True 
 
-    # UPDATE
     @staticmethod
     def update(
         db: Session,
@@ -133,27 +121,45 @@ class SiteHierarchyRepository:
                 detail="Site name already exists",
             )
 
-        for field, value in payload.model_dump(exclude_unset=True).items():
-            setattr(site, field, value)
+        data = payload.model_dump(exclude_unset=True)
+
+        # -----------------------------
+        # Update hierarchy fields
+        # -----------------------------
+        for field in ["name", "parent_site_hierarchy_id", "is_active"]:
+            if field in data:
+                setattr(site, field, data[field])
 
         db.flush()
+
+        # -----------------------------
+        # Handle leaf node logic
+        # -----------------------------
+        if "is_public" in data or "is_protected" in data:
+            # find associated site_locations
+            locations = db.query(SiteLocation).filter(
+                SiteLocation.site_hierarchy_id == site.id
+            ).all()
+
+            for loc in locations:
+                if "is_public" in data:
+                    loc.is_public = data["is_public"]
+                if "is_protected" in data:
+                    loc.is_protected = data["is_protected"]
 
         # ---------------------------------------
         # sync leaf lifecycle
         # ---------------------------------------
-
-        # this node
         SiteHierarchyRepository.sync_leaf_state(db, site.id)
 
-        # old parent may become leaf
         if old_parent_id and old_parent_id != site.parent_site_hierarchy_id:
             SiteHierarchyRepository.sync_leaf_state(db, old_parent_id)
 
-        # new parent loses leaf status
         if site.parent_site_hierarchy_id:
             SiteHierarchyRepository.sync_leaf_state(db, site.parent_site_hierarchy_id)
 
         db.commit()
+        db.refresh(site)
 
         return (
             db.query(SiteHierarchy)
@@ -161,7 +167,6 @@ class SiteHierarchyRepository:
             .filter(SiteHierarchy.id == site.id)
             .one()
         )
-
 
     @staticmethod
     def list(
@@ -174,7 +179,7 @@ class SiteHierarchyRepository:
         stmt = (
             select(SiteHierarchy)
             .options(joinedload(SiteHierarchy.parent))
-            .where(SiteHierarchy.is_active.is_(True))  # ✅ filter active only
+            .where(SiteHierarchy.is_active.is_(True))  # filter active only
         )
 
         if search:
