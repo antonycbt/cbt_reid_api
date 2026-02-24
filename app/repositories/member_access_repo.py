@@ -101,8 +101,9 @@ class MemberAccessRepository:
         access_group_map: dict[int, dict] = {}
 
         for member in members:
-            if not member.is_active:
-                continue
+            full_name = " ".join(
+                part for part in [member.first_name, member.last_name] if part
+            )
 
             full_name = " ".join(
                 part for part in [member.first_name, member.last_name] if part

@@ -26,5 +26,5 @@ v1_router.include_router(access_groups.router, prefix="/access_groups", tags=["A
 v1_router.include_router(members.router, prefix="/members", tags=["Members"])
 v1_router.include_router(site_location_access.router, prefix="/site_location_access", tags=["Site Location Acess"])
 v1_router.include_router(member_access.router, prefix="/member_access", tags=["Member Acess"])
-v1_router.include_router(embeddings.router, prefix="/embeddings", tags=["Embeddings"])
+v1_router.include_router(embeddings.router, prefix="/embeddings", tags=["Embeddings"]) 
 v1_router.include_router(tracking.router, prefix="/tracking", tags=["tracking"])  
