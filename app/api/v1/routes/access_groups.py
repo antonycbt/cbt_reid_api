@@ -67,6 +67,15 @@ def get_all_access_groups(db: Session = Depends(get_db)):
         "data": groups,
         "total": len(groups),
     } 
+
+@router.get("/active_hierarchy", response_model=MessageResponse[List[AccessGroupOut]])
+def get_active_hierarchy_access_groups(db: Session = Depends(get_db)):
+    groups, total = AccessGroupService.list_access_groups_active_hierarchy()
+    return {
+        "message": "Access groups fetched successfully",
+        "data": groups,
+        "total": total,
+    }
   
 # ---------- LIST (search + pagination) ----------
 
