@@ -1,4 +1,4 @@
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload ,aliased
 from sqlalchemy import select, func
 from typing import List
 
@@ -80,6 +80,34 @@ class AccessGroupRepository:
             .filter(AccessGroup.id == group.id)
             .one()
         )
+    
+    @staticmethod
+    def list_active_hierarchy(db: Session) -> tuple[list[AccessGroup], int]:
+        anchor = (
+            select(AccessGroup.id)
+            .where(AccessGroup.parent_access_group_id.is_(None))
+            .where(AccessGroup.is_active == True)
+            .cte(name="active_hierarchy", recursive=True)
+        )
+
+        child = aliased(AccessGroup)
+        recursive_part = (
+            select(child.id)
+            .join(anchor, child.parent_access_group_id == anchor.c.id)
+            .where(child.is_active == True)
+        )
+
+        active_hierarchy = anchor.union_all(recursive_part)
+
+        stmt = (
+            select(AccessGroup)
+            .options(joinedload(AccessGroup.parent))
+            .where(AccessGroup.id.in_(select(active_hierarchy.c.id)))
+            .order_by(func.lower(AccessGroup.name).asc())
+        )
+
+        groups = db.execute(stmt).scalars().all()
+        return groups, len(groups)
 
     # LIST (search + pagination)
     @staticmethod

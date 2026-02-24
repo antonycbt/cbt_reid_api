@@ -85,6 +85,14 @@ class AccessGroupService:
         finally:
             db.close()
 
+    @staticmethod
+    def list_access_groups_active_hierarchy():
+        db = SessionLocal()
+        try:
+            return AccessGroupRepository.list_active_hierarchy(db)
+        finally:
+            db.close()
+
     # HARD DELETE access group
     @staticmethod
     def delete_access_group(

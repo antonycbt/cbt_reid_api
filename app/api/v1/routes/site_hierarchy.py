@@ -124,6 +124,47 @@ def list_site_hierarchies(
         "total": total,
     }
 
+@router.get("/active_hierarchy", response_model=MessageResponse[List[SiteHierarchyOut]])
+def list_active_site_hierarchies(
+    db: Session = Depends(get_db)
+):
+    used_by_camera = exists().where(
+        and_(
+            Camera.site_location_id == SiteLocation.id,
+            SiteLocation.site_hierarchy_id == SiteHierarchy.id,
+        )
+    )
+
+    sites = (
+        db.query(SiteHierarchy)
+        .filter(
+            ~used_by_camera,
+            SiteHierarchy.is_active == True,
+        )
+        .all()
+    )
+
+    all_sites_map: dict[int, SiteHierarchy] = {s.id: s for s in db.query(SiteHierarchy).all()}
+
+    def all_ancestors_active(site: SiteHierarchy) -> bool:
+        current = site
+        while current.parent_site_hierarchy_id is not None:
+            parent = all_sites_map.get(current.parent_site_hierarchy_id)
+            if parent is None or not parent.is_active:
+                return False
+            current = parent
+        return True
+
+    valid_sites = [s for s in sites if all_ancestors_active(s)]
+
+    for site in valid_sites:
+        site.children = []
+
+    return {
+        "message": "Active site hierarchies fetched successfully",
+        "data": [SiteHierarchyOut.from_orm(s) for s in valid_sites],
+        "total": len(valid_sites),
+    }
 
 # CREATE
 @router.post("", response_model=MessageResponse[SiteHierarchyOut])

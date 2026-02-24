@@ -2,7 +2,7 @@
 from typing import List, Set, Dict, Optional, Tuple
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select, or_
-from app.db.models import Camera, SiteLocation
+from app.db.models import Camera, SiteLocation, SiteHierarchy
 from app.schemas.camera import CameraCreate, CameraUpdate
 from fastapi import HTTPException
 from app.db.models.site_location import SiteLocation
@@ -48,7 +48,21 @@ class CameraRepository:
         search: str | None = None,
         page: int = 0,
         page_size: int = 10
-    ) -> tuple[list[Camera], int]:
+    ) -> tuple[list, int]:
+
+        # Pre-fetch all site hierarchies for ancestor traversal
+        all_hierarchies = {s.id: s for s in db.query(SiteHierarchy).all()}
+
+        def all_hierarchy_ancestors_active(site_hierarchy_id: int) -> bool:
+            current = all_hierarchies.get(site_hierarchy_id)
+            if current is None or not current.is_active:
+                return False
+            while current.parent_site_hierarchy_id is not None:
+                parent = all_hierarchies.get(current.parent_site_hierarchy_id)
+                if parent is None or not parent.is_active:
+                    return False
+                current = parent
+            return True
 
         stmt = (
             db.query(Camera)
@@ -56,7 +70,8 @@ class CameraRepository:
                 joinedload(Camera.site_location_rel)
                 .joinedload(SiteLocation.site_hierarchy)
             )
-        )  
+        )
+
         if search:
             stmt = stmt.filter(
                 or_(
@@ -74,7 +89,20 @@ class CameraRepository:
             .all()
         )
 
-        return cameras, total
+        result = []
+        for camera in cameras:
+            site_location_active = (
+                all_hierarchy_ancestors_active(camera.site_location_rel.site_hierarchy_id)
+                if camera.site_location_rel
+                else False
+            )
+            result.append({
+                **{c.name: getattr(camera, c.name) for c in Camera.__table__.columns},
+                "site_location": camera.site_location_rel.site_hierarchy.name if camera.site_location_rel and camera.site_location_rel.site_hierarchy else None,
+                "site_location_active": site_location_active,
+            })
+
+        return result, total
 
     @staticmethod
     def update(db: Session, camera: Camera, payload: CameraUpdate) -> Camera:

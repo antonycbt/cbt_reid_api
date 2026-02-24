@@ -152,7 +152,7 @@ def get_camera(camera_id: int, db: Session = Depends(get_db)):
 
 
 # LIST cameras
-@router.get("", response_model=MessageResponse[list[CameraOut]])
+@router.get("", response_model=MessageResponse[list])
 def list_cameras(
     search: Optional[str] = None,
     page: int = Query(0, ge=0),
