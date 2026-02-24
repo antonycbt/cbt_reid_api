@@ -180,3 +180,38 @@ class MemberRepository:
     def delete(db: Session, member: Member) -> None:
         db.delete(member)
         db.commit()
+
+        
+
+    # -------------------------
+    # BULK IMPORT
+    # -------------------------
+
+    @staticmethod
+    def bulk_create(db: Session, members: List[Member]) -> List[Member]:
+        db.add_all(members)
+        db.commit()
+        for member in members:
+            db.refresh(member)
+        return members
+
+    @staticmethod
+    def get_existing_member_numbers(db: Session, member_numbers: List[str]) -> set[str]:
+        rows = db.execute(
+            select(Member.member_number).where(
+                func.lower(Member.member_number).in_(
+                    [mn.lower() for mn in member_numbers]
+                )
+            )
+        ).scalars().all()
+        return {mn.lower() for mn in rows}
+
+
+    @staticmethod
+    def get_department_name_map(db: Session) -> dict[str, int]:
+        from app.db.models.department import Department
+        rows = db.execute(
+            select(Department.id, Department.name)
+            .where(Department.is_active == True)  # ← only active departments
+        ).all()
+        return {row.name.strip().lower(): row.id for row in rows}

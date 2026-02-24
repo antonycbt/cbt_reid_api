@@ -3,7 +3,7 @@ from sqlalchemy import select, or_, func
 
 from app.db.models.user import User
 from app.schemas.user import UserCreate, UserUpdate
-
+from datetime import datetime, timezone
 
 class UserRepository:
 
@@ -37,8 +37,8 @@ class UserRepository:
     @staticmethod
     def get_by_email(db: Session, email: str) -> User | None:
         stmt = select(User).where(User.email == email)
-        return db.execute(stmt).scalars().first() 
-    
+        return db.execute(stmt).scalars().first()
+
     @staticmethod
     def list(
         db: Session,
@@ -52,11 +52,13 @@ class UserRepository:
         # search
         if search:
             search_term = f"%{search.lower()}%"
+            full_name = func.lower(User.first_name + " " + User.last_name)
             stmt = stmt.where(
                 or_(
                     func.lower(User.first_name).like(search_term),
                     func.lower(User.last_name).like(search_term),
                     func.lower(User.email).like(search_term),
+                    full_name.like(search_term),
                 )
             )
 
@@ -100,5 +102,11 @@ class UserRepository:
     @staticmethod
     def delete(db: Session, user: User) -> None:
         db.delete(user)
+        db.commit()
+    
+    # Update last_login
+    @staticmethod
+    def update_last_login(db: Session, user: User) -> None:
+        user.last_login_ts = datetime.now(timezone.utc)
         db.commit()
 

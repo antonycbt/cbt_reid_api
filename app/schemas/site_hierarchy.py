@@ -8,6 +8,8 @@ class SiteHierarchyCreate(TrimmedModel):
     name: str
     parent_site_hierarchy_id: Optional[int] = None
     is_active: bool = True
+    is_public: Optional[bool] = False
+    is_protected: Optional[bool] = False
 
 
 # -------------------------
@@ -17,6 +19,8 @@ class SiteHierarchyUpdate(TrimmedModel):
     name: Optional[str]
     parent_site_hierarchy_id: Optional[int]
     is_active: Optional[bool]
+    is_public: Optional[bool] = False
+    is_protected: Optional[bool] = False
 
 
 # -------------------------
@@ -29,6 +33,8 @@ class SiteHierarchyNode(BaseModel):
     is_active: bool
     children: List["SiteHierarchyNode"] = []
     is_locked: bool = False
+    is_public: Optional[bool] = None
+    is_protected: Optional[bool] = None
     model_config = {"from_attributes": True}
 
 SiteHierarchyNode.update_forward_refs()

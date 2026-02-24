@@ -71,15 +71,24 @@ class MemberAccessRepository:
 
     # -------- LIST --------
     @staticmethod
-    def list(db, search: str | None, page: int = 0, page_size: int = 10): 
+    def list(db, search: str | None, page: int = 0, page_size: int = 10):
+
+        # Pre-fetch all access groups for ancestor traversal
+        all_access_groups = {ag.id: ag for ag in db.query(AccessGroup).all()}
+
+        def all_access_group_ancestors_active(access_group_id: int) -> bool:
+            current = all_access_groups.get(access_group_id)
+            while current and current.parent_access_group_id is not None:
+                parent = all_access_groups.get(current.parent_access_group_id)
+                if parent is None or not parent.is_active:
+                    return False
+                current = parent
+            return True
+
         query = (
-                    db.query(Member)
-                    .options(
-                        joinedload(Member.access_groups),
-                        with_loader_criteria(AccessGroup, AccessGroup.is_active.is_(True))
-                    )
-                )
-        
+            db.query(Member)
+            .options(joinedload(Member.access_groups))
+        )
 
         if search:
             query = query.filter(
@@ -89,22 +98,35 @@ class MemberAccessRepository:
         total = query.count()
         members = query.offset(page * page_size).limit(page_size).all()
 
-        result = []
+        access_group_map: dict[int, dict] = {}
+
         for member in members:
             full_name = " ".join(
                 part for part in [member.first_name, member.last_name] if part
             )
 
-            result.append({
-                "member_id": member.id,
-                "member_access_name": full_name,
-                "access_groups": [
-                    {"id": ag.id, "name": ag.name} for ag in member.access_groups
-                ],
-            })
+            full_name = " ".join(
+                part for part in [member.first_name, member.last_name] if part
+            )
 
+            for ag in member.access_groups:
+                if not ag.is_active or not all_access_group_ancestors_active(ag.id):
+                    continue
+
+                if ag.id not in access_group_map:
+                    access_group_map[ag.id] = {
+                        "access_group_id": ag.id,
+                        "access_group_name": ag.name,
+                        "members": [],
+                    }
+
+                access_group_map[ag.id]["members"].append({
+                    "member_id": member.id,
+                    "member_name": full_name,
+                })
+
+        result = list(access_group_map.values())
         return result, total
-
 
     # -------- DELETE --------
     @staticmethod

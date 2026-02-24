@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     RTSP_SCHEME: str = "rtsp"
     RTSP_STREAM: str = ""
     RTSP_URL_TEMPLATE: str = ""
-
+    JWT_SECRET: str = "A7fK9xP2mQ4zL9"
     model_config = SettingsConfigDict(
         env_file=".env",
         case_sensitive=True,

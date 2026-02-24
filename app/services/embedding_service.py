@@ -2312,7 +2312,7 @@ def start_extraction(member_id: int, camera_ids: Optional[Any] = None, show_view
     if is_running:
         return {
             "status": "ok",
-            "message": "already running",
+            "message": "Already running",
             "num_cams": len(current_camera_ids),
             "member_id": current_member_id,
             "member_name": current_member_name,

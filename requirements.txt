@@ -22,6 +22,7 @@ deep-sort-realtime==1.3.2
 dnspython==2.8.0
 easydict==1.13
 email-validator==2.3.0
+et_xmlfile==2.0.0
 exceptiongroup==1.3.1
 fastapi==0.128.0
 filelock==3.19.1
@@ -56,12 +57,13 @@ mccabe==0.7.0
 ml_dtypes==0.5.4
 mpmath==1.3.0
 networkx==3.3
-numpy==2.2.6
+numpy==1.26.4
 onnx==1.20.0
 onnxruntime-gpu==1.23.2
 opencv-contrib-python==4.12.0.88
 opencv-python==4.12.0.88
 opencv-python-headless==4.13.0.90
+openpyxl==3.1.5
 packaging==25.0
 passlib==1.7.4
 pgvector==0.4.1
@@ -79,11 +81,13 @@ pydantic==2.12.5
 pydantic-settings==2.12.0
 pydantic_core==2.41.5
 pyflakes==3.4.0
+PyJWT==2.11.0
 pyparsing==3.2.5
 pyreadline3==3.5.4
 PySocks==1.7.1
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.1
+python-multipart==0.0.22
 PyYAML==6.0.3
 regex==2025.11.3
 requests==2.32.5
@@ -105,9 +109,10 @@ threadpoolctl==3.6.0
 tifffile==2025.5.10
 tokenizers==0.22.2
 tomli==2.3.0
-# torch==2.10.0+cu128
-# # torchreid @ git+https://github.com/KaiyangZhou/deep-person-reid.git@f8cd150fdf77e8d9e1ed143b7f308c2c609ded50
-# torchvision==0.25.0+cu128
+torch==2.2.2+cpu
+torchaudio==2.2.2+cpu
+torchreid @ git+https://github.com/KaiyangZhou/deep-person-reid.git@f8cd150fdf77e8d9e1ed143b7f308c2c609ded50
+torchvision==0.17.2+cpu
 tqdm==4.67.1
 transformers==4.57.3
 typing-inspection==0.4.2

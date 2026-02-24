@@ -1,7 +1,10 @@
-from fastapi import APIRouter, HTTPException, Query, Depends
+import io
+import openpyxl
+from app.schemas.common import BulkImportResponse
+from fastapi import APIRouter, HTTPException, Query, Depends , UploadFile, File
 from typing import Optional
 from sqlalchemy.orm import Session, joinedload
-
+from app.repositories.site_hierarchy_repo import SiteHierarchyRepository
 from app.schemas.camera import (
     CameraCreate,
     CameraUpdate,
@@ -66,10 +69,19 @@ def list_active_cameras(db: Session = Depends(get_db)):
 # FETCH site locations 
 @router.get("/load_site_locations", response_model=MessageResponse[list[dict]])
 def list_site_locations(db: Session = Depends(get_db)):
+    fully_active_hierarchy_ids = SiteHierarchyRepository.get_fully_active_hierarchy_ids(db)
+
+    if not fully_active_hierarchy_ids:
+        return {"message": "Site locations fetched successfully", "data": []}
+
     locations = (
         db.query(SiteLocation)
+        .join(SiteLocation.site_hierarchy)
         .options(joinedload(SiteLocation.site_hierarchy))
-        .filter(SiteLocation.is_active.is_(True))
+        .filter(
+            SiteLocation.is_active.is_(True),
+            SiteHierarchy.id.in_(fully_active_hierarchy_ids),
+        )
         .all()
     )
 
@@ -80,8 +92,33 @@ def list_site_locations(db: Session = Depends(get_db)):
         }
         for loc in locations
     ]
+    return {"message": "Site locations fetched successfully", "data": data}
 
-    return {"message": "Site locations fetched successfully", "data": data} 
+
+
+@router.post("/bulk_import", response_model=MessageResponse[BulkImportResponse])
+async def bulk_import_cameras(file: UploadFile = File(...)):
+    if not file.filename.endswith((".xlsx", ".xls")):
+        raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are allowed")
+
+    contents = await file.read()
+
+    try:
+        wb = openpyxl.load_workbook(filename=io.BytesIO(contents), read_only=True, data_only=True)
+        ws = wb.active
+        rows = list(ws.iter_rows(min_row=2, values_only=True))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse Excel file: {str(e)}")
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No data rows found in the uploaded file.")
+
+    result = CameraService.bulk_import_cameras_from_rows(rows)
+
+    return {
+        "message": result["message"],
+        "data": BulkImportResponse(**result),
+    }
 
 # CREATE camera
 @router.post("", response_model=MessageResponse[CameraOut])
@@ -115,7 +152,7 @@ def get_camera(camera_id: int, db: Session = Depends(get_db)):
 
 
 # LIST cameras
-@router.get("", response_model=MessageResponse[list[CameraOut]])
+@router.get("", response_model=MessageResponse[list])
 def list_cameras(
     search: Optional[str] = None,
     page: int = Query(0, ge=0),
