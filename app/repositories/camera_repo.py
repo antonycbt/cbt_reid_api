@@ -1,18 +1,18 @@
-# camera_repo.py
-from typing import List, Set, Dict, Optional, Tuple
+from typing import List, Set
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import select, or_
 from app.db.models import Camera, SiteLocation, SiteHierarchy
 from app.schemas.camera import CameraCreate, CameraUpdate
 from fastapi import HTTPException
-from app.db.models.site_location import SiteLocation
+
+
 class CameraRepository:
 
     @staticmethod
     def create(db: Session, payload: CameraCreate) -> Camera:
         existing = db.execute(
             select(Camera.id).where(Camera.ip_address == payload.ip_address)
-        ).first() 
+        ).first()
         if existing:
             raise HTTPException(
                 status_code=400,
@@ -24,9 +24,8 @@ class CameraRepository:
             ip_address=payload.ip_address,
             site_location_id=payload.site_location_id,
         )
-
         db.add(camera)
-        db.commit()
+        db.flush()       # ← service commits
         db.refresh(camera)
         return camera
 
@@ -47,10 +46,8 @@ class CameraRepository:
         db: Session,
         search: str | None = None,
         page: int = 0,
-        page_size: int = 10
+        page_size: int = 10,
     ) -> tuple[list, int]:
-
-        # Pre-fetch all site hierarchies for ancestor traversal
         all_hierarchies = {s.id: s for s in db.query(SiteHierarchy).all()}
 
         def all_hierarchy_ancestors_active(site_hierarchy_id: int) -> bool:
@@ -81,7 +78,6 @@ class CameraRepository:
             )
 
         total = stmt.count()
-
         cameras = (
             stmt.order_by(Camera.is_active.desc(), Camera.name.asc())
             .offset(page * page_size)
@@ -98,7 +94,11 @@ class CameraRepository:
             )
             result.append({
                 **{c.name: getattr(camera, c.name) for c in Camera.__table__.columns},
-                "site_location": camera.site_location_rel.site_hierarchy.name if camera.site_location_rel and camera.site_location_rel.site_hierarchy else None,
+                "site_location": (
+                    camera.site_location_rel.site_hierarchy.name
+                    if camera.site_location_rel and camera.site_location_rel.site_hierarchy
+                    else None
+                ),
                 "site_location_active": site_location_active,
             })
 
@@ -108,47 +108,42 @@ class CameraRepository:
     def update(db: Session, camera: Camera, payload: CameraUpdate) -> Camera:
         data = payload.model_dump(exclude_unset=True)
 
-        # check duplicate IP only if ip_address is being updated
         if "ip_address" in data:
             existing = db.execute(
                 select(Camera.id).where(
                     Camera.ip_address == data["ip_address"],
-                    Camera.id != camera.id,  # exclude current camera
+                    Camera.id != camera.id,
                 )
             ).first()
-
             if existing:
                 raise HTTPException(
                     status_code=400,
                     detail="Camera with this IP address already exists",
                 )
 
-        # apply updates
         for field, value in data.items():
             setattr(camera, field, value)
 
-        db.commit()
+        db.flush()       # ← service commits
         db.refresh(camera)
-        return camera 
-    
+        return camera
+
     @staticmethod
     def delete(db: Session, camera: Camera) -> None:
         db.delete(camera)
-        db.commit()
+        db.flush()       # ← service commits
 
     @staticmethod
     def get_existing_ip_addresses(db: Session, ip_addresses: List[str]) -> Set[str]:
         rows = db.execute(
-            select(Camera.ip_address).where(
-                Camera.ip_address.in_(ip_addresses)
-            )
+            select(Camera.ip_address).where(Camera.ip_address.in_(ip_addresses))
         ).scalars().all()
-        return {ip for ip in rows}
+        return set(rows)
 
     @staticmethod
     def bulk_create(db: Session, cameras: List) -> List:
         db.add_all(cameras)
-        db.commit()
+        db.flush()
         for camera in cameras:
             db.refresh(camera)
-        return cameras      
+        return cameras

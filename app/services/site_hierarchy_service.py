@@ -1,45 +1,177 @@
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
+from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from app.db.session import SessionLocal
-from sqlalchemy.orm import Session
 from app.repositories.site_hierarchy_repo import SiteHierarchyRepository
-from app.schemas.site_hierarchy import ( 
-    SiteHierarchyUpdate,
-)
+from app.schemas.site_hierarchy import SiteHierarchyUpdate
 from app.db.models.site_hierarchy import SiteHierarchy
-from typing import List, Optional
 from app.db.models.site_location import SiteLocation
+from app.services.activity_log_service import ActivityLogService
+from app.schemas.activity_log import ActivityDetail
+from app.core.activity_helper import (
+    snapshot,
+    build_create_changes,
+    build_update_changes,
+    build_delete_changes,
+)
+from typing import List, Optional, Any
+
+SITE_HIERARCHY_TARGET_TYPE = 3
+SITE_HIERARCHY_ENTITY = "site_hierarchy"
+SITE_HIERARCHY_EXCLUDE = {"id"}
+
+
+def _get_hierarchy_name(db: Session, hierarchy_id: int) -> str | None:
+    try:
+        row = db.execute(
+            text("SELECT name FROM site_hierarchies WHERE id = :id"),
+            {"id": hierarchy_id},
+        ).mappings().first()
+        return row["name"] if row else None
+    except Exception:
+        return None
+
+
+def _resolve_site_hierarchy_changes(
+    db: Session,
+    changes: dict[str, list[Any]],
+) -> dict[str, list[Any]]:
+    """Resolve parent_site_hierarchy_id → name at write time."""
+    resolved = {}
+    for field, (old, new) in changes.items():
+        if field == "parent_site_hierarchy_id":
+            old_name = _get_hierarchy_name(db, old) if old is not None else None
+            new_name = _get_hierarchy_name(db, new) if new is not None else None
+            # only include if at least one side resolved
+            if old_name is not None or new_name is not None:
+                resolved["parent_site_hierarchy"] = [old_name, new_name]
+        else:
+            resolved[field] = [old, new]
+    return resolved
+
 
 class SiteHierarchyService:
 
-    # CREATE site hierarchy
     @staticmethod
-    def create_site_hierarchy(db: Session, payload):
-        if SiteHierarchyRepository.exists_with_name(
-            db,
-            payload.name,
-        ):
+    def create_site_hierarchy(db: Session, payload, actor_id: int):
+        if SiteHierarchyRepository.exists_with_name(db, payload.name):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Site name already exists",
             )
 
-        return SiteHierarchyRepository.create(db, payload)
+        site = SiteHierarchyRepository.create(db, payload)
+
+        detail = ActivityDetail(
+            action="create",
+            entity=SITE_HIERARCHY_ENTITY,
+            changes=_resolve_site_hierarchy_changes(
+                db,
+                build_create_changes(site, exclude=SITE_HIERARCHY_EXCLUDE),
+            ),
+            meta={
+                "actor_id": actor_id,
+                "display_name": site.name,
+            },
+        )
+        ActivityLogService.log(
+            db=db,
+            actor_id=actor_id,
+            target_type=SITE_HIERARCHY_TARGET_TYPE,
+            target_id=site.id,
+            detail=detail,
+        )
+
+        db.commit()
+        db.refresh(site)
+        return site
 
     @staticmethod
     def update_site_hierarchy(
         db: Session,
         site_hierarchy_id: int,
         payload: SiteHierarchyUpdate,
+        actor_id: int,
     ):
         site = SiteHierarchyRepository.get_by_id(db, site_hierarchy_id)
         if not site:
             raise HTTPException(status_code=404, detail="Site not found")
 
-        return SiteHierarchyRepository.update(db, site, payload)
+        before = snapshot(site)
+        updated_site = SiteHierarchyRepository.update(db, site, payload)
 
-    # GET site hierarchy by ID
+        detail = ActivityDetail(
+            action="update",
+            entity=SITE_HIERARCHY_ENTITY,
+            changes=_resolve_site_hierarchy_changes(
+                db,
+                build_update_changes(before, updated_site, exclude=SITE_HIERARCHY_EXCLUDE),
+            ),
+            meta={
+                "actor_id": actor_id,
+                "display_name": updated_site.name,
+            },
+        )
+        ActivityLogService.log(
+            db=db,
+            actor_id=actor_id,
+            target_type=SITE_HIERARCHY_TARGET_TYPE,
+            target_id=site_hierarchy_id,
+            detail=detail,
+        )
+
+        db.commit()
+        db.refresh(updated_site)
+        return updated_site
+
+    @staticmethod
+    def delete_site_hierarchy(
+        db: Session,
+        site_hierarchy_id: int,
+        actor_id: int,
+    ) -> bool:
+        site = SiteHierarchyRepository.get_by_id(db, site_hierarchy_id)
+        if not site:
+            return False
+
+        before = snapshot(site)
+
+        locations = db.query(SiteLocation).filter(
+            SiteLocation.site_hierarchy_id == site_hierarchy_id
+        ).all()
+        for loc in locations:
+            db.delete(loc)
+
+        db.delete(site)
+        db.flush()
+
+        detail = ActivityDetail(
+            action="delete",
+            entity=SITE_HIERARCHY_ENTITY,
+            changes=_resolve_site_hierarchy_changes(
+                db,
+                build_delete_changes(before, exclude=SITE_HIERARCHY_EXCLUDE),
+            ),
+            meta={
+                "actor_id": actor_id,
+                "display_name": before.get("name"),  # from snapshot before delete
+            },
+        )
+        ActivityLogService.log(
+            db=db,
+            actor_id=actor_id,
+            target_type=SITE_HIERARCHY_TARGET_TYPE,
+            target_id=site_hierarchy_id,
+            detail=detail,
+        )
+
+        db.commit()
+        return True
+
+    # ---- unchanged methods below ----
+
     @staticmethod
     def get_site_hierarchy(site_hierarchy_id: int) -> SiteHierarchy | None:
         db = SessionLocal()
@@ -48,7 +180,6 @@ class SiteHierarchyService:
         finally:
             db.close()
 
-    # LIST site hierarchies (search + pagination)
     @staticmethod
     def list_site_hierarchies(
         search: str | None = None,
@@ -57,15 +188,12 @@ class SiteHierarchyService:
     ):
         db = SessionLocal()
         try:
-            return SiteHierarchyRepository.list(
-                db, search, page, page_size
-            )
+            return SiteHierarchyRepository.list(db, search, page, page_size)
         finally:
-            db.close() 
-            
+            db.close()
+
     @staticmethod
     def get_tree(search: str = None):
-        from app.repositories.site_hierarchy_repo import SiteHierarchyRepository
         db = SessionLocal()
         try:
             nodes = SiteHierarchyRepository.list_all(db, search)
@@ -75,40 +203,18 @@ class SiteHierarchyService:
 
     @staticmethod
     def build_tree(nodes: list):
-        # Convert to dict for easy child assignment
         node_map = {node.id: dict(node.__dict__, children=[]) for node in nodes}
         roots = []
-
         for node in node_map.values():
             pid = node.get("parent_site_hierarchy_id")
             if pid and pid in node_map:
                 node_map[pid]["children"].append(node)
             else:
                 roots.append(node)
-
         return roots
 
-
-
-    # HARD DELETE site hierarchy
-    @staticmethod
-    def delete_site_hierarchy(site_hierarchy_id: int) -> bool:
-        db = SessionLocal()
-        try:
-            site = SiteHierarchyRepository.get_by_id(
-                db, site_hierarchy_id
-            )
-            if not site:
-                return False
-
-            SiteHierarchyRepository.delete(db, site)
-            return True
-
-        finally:
-            db.close()
     @staticmethod
     def _build_site_location_tree(locations: List[SiteLocation]) -> List[dict]:
-        # serialize locations and attach cameras, then nest by parent_site_location_id
         def serialize_loc(loc: SiteLocation) -> dict:
             return {
                 "id": loc.id,
@@ -121,7 +227,7 @@ class SiteHierarchyService:
                     {
                         "id": cam.id,
                         "name": cam.name,
-                        "ip_address": cam.ip_address, 
+                        "ip_address": cam.ip_address,
                         "is_active": cam.is_active,
                     }
                     for cam in getattr(loc, "cameras", []) or []
@@ -147,16 +253,11 @@ class SiteHierarchyService:
             "parent_site_hierarchy_id": h.parent_site_hierarchy_id,
             "is_active": h.is_active,
             "site_locations": loc_tree,
-            "children": []  # filled by build_hierarchy_tree
+            "children": []
         }
 
     @staticmethod
     def build_hierarchy_tree(hierarchies: List[SiteHierarchy]) -> List[dict]:
-        """
-        Build the tree of SiteHierarchy nodes (parent-child). Each hierarchy node
-        will include its site_locations as a nested tree (via _build_site_location_tree).
-        """
-        # first serialize every hierarchy with its site_locations tree
         node_map = {}
         for h in hierarchies:
             locs = getattr(h, "site_locations", []) or []
@@ -170,11 +271,13 @@ class SiteHierarchyService:
                 node_map[pid]["children"].append(node)
             else:
                 roots.append(node)
-
         return roots
 
     @staticmethod
-    def get_full_hierarchy_tree(site_hierarchy_id: Optional[int] = None, include_inactive: bool = False) -> List[dict]:
+    def get_full_hierarchy_tree(
+        site_hierarchy_id: Optional[int] = None,
+        include_inactive: bool = False,
+    ) -> List[dict]:
         db = SessionLocal()
         try:
             hierarchies = SiteHierarchyRepository.list_hierarchies_with_locations(
@@ -183,5 +286,3 @@ class SiteHierarchyService:
             return SiteHierarchyService.build_hierarchy_tree(hierarchies)
         finally:
             db.close()
-
-    

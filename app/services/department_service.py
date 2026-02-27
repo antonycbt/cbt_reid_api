@@ -5,15 +5,48 @@ from app.db.session import SessionLocal
 from app.repositories.department_repo import DepartmentRepository
 from app.schemas.department import DepartmentCreate, DepartmentUpdate
 from app.db.models.department import Department
+from app.services.activity_log_service import ActivityLogService
+from app.schemas.activity_log import ActivityDetail
+from app.core.activity_helper import (
+    snapshot,
+    build_create_changes,
+    build_update_changes,
+    build_delete_changes,
+)
+
+DEPARTMENT_TARGET_TYPE = 2
+DEPARTMENT_ENTITY = "department"
+DEPARTMENT_EXCLUDE = {"id", "created_ts"}
 
 
 class DepartmentService:
 
     @staticmethod
-    def create_department(payload: DepartmentCreate) -> Department:
+    def create_department(payload: DepartmentCreate, actor_id: int) -> Department:
         db = SessionLocal()
         try:
-            return DepartmentRepository.create(db, payload)
+            department = DepartmentRepository.create(db, payload)
+
+            detail = ActivityDetail(
+                action="create",
+                entity=DEPARTMENT_ENTITY,
+                changes=build_create_changes(department, exclude=DEPARTMENT_EXCLUDE),
+                meta={
+                    "actor_id": actor_id,
+                    "display_name": department.name,
+                },
+            )
+            ActivityLogService.log(
+                db=db,
+                actor_id=actor_id,
+                target_type=DEPARTMENT_TARGET_TYPE,
+                target_id=department.id,
+                detail=detail,
+            )
+
+            db.commit()
+            db.refresh(department)
+            return department
 
         except IntegrityError:
             db.rollback()
@@ -21,12 +54,9 @@ class DepartmentService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Department already exists"
             )
-
         finally:
             db.close()
 
-
-    # Get Department by ID
     @staticmethod
     def get_department(department_id: int) -> Department | None:
         db = SessionLocal()
@@ -35,7 +65,6 @@ class DepartmentService:
         finally:
             db.close()
 
-    # List Departments (search + pagination)
     @staticmethod
     def list_departments(
         search: str | None = None,
@@ -48,16 +77,41 @@ class DepartmentService:
         finally:
             db.close()
 
-    # Update Department
     @staticmethod
-    def update_department(department_id: int, payload: DepartmentUpdate) -> Department:
+    def update_department(
+        department_id: int, payload: DepartmentUpdate, actor_id: int
+    ) -> Department:
         db = SessionLocal()
         try:
             department = DepartmentRepository.get_by_id(db, department_id)
             if not department:
                 raise HTTPException(status_code=404, detail="Department not found")
 
-            return DepartmentRepository.update(db, department, payload)
+            before = snapshot(department)
+            updated_department = DepartmentRepository.update(db, department, payload)
+
+            detail = ActivityDetail(
+                action="update",
+                entity=DEPARTMENT_ENTITY,
+                changes=build_update_changes(
+                    before, updated_department, exclude=DEPARTMENT_EXCLUDE
+                ),
+                meta={
+                    "actor_id": actor_id,
+                    "display_name": updated_department.name,  # use updated name
+                },
+            )
+            ActivityLogService.log(
+                db=db,
+                actor_id=actor_id,
+                target_type=DEPARTMENT_TARGET_TYPE,
+                target_id=department_id,
+                detail=detail,
+            )
+
+            db.commit()
+            db.refresh(updated_department)
+            return updated_department
 
         except IntegrityError:
             db.rollback()
@@ -65,22 +119,42 @@ class DepartmentService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Department name already exists"
             )
-
         finally:
             db.close()
 
-
-    # Hard delete Department
     @staticmethod
-    def delete_department(department_id: int) -> bool:
+    def delete_department(department_id: int, actor_id: int) -> bool:
         db = SessionLocal()
         try:
             department = DepartmentRepository.get_by_id(db, department_id)
             if not department:
                 return False
 
+            before = snapshot(department)
             DepartmentRepository.delete(db, department)
+
+            detail = ActivityDetail(
+                action="delete",
+                entity=DEPARTMENT_ENTITY,
+                changes=build_delete_changes(before, exclude=DEPARTMENT_EXCLUDE),
+                meta={
+                    "actor_id": actor_id,
+                    "display_name": before.get("name"),  # from snapshot before delete
+                },
+            )
+            ActivityLogService.log(
+                db=db,
+                actor_id=actor_id,
+                target_type=DEPARTMENT_TARGET_TYPE,
+                target_id=department_id,
+                detail=detail,
+            )
+
+            db.commit()
             return True
+        except Exception:
+            db.rollback()
+            raise
         finally:
             db.close()
 
@@ -90,5 +164,4 @@ class DepartmentService:
         try:
             return DepartmentRepository.list_all_active(db)
         finally:
-            db.close()        
-
+            db.close()
