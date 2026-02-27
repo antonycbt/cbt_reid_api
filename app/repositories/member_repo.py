@@ -4,14 +4,11 @@ from typing import List
 
 from app.db.models.member import Member
 from app.db.models.member_embedding import MemberEmbedding
-from app.schemas.member import MemberCreate, MemberUpdate 
+from app.schemas.member import MemberCreate, MemberUpdate
 
 
 class MemberRepository:
 
-    # -------------------------
-    # CREATE
-    # -------------------------
     @staticmethod
     def create(db: Session, payload: MemberCreate) -> Member:
         member = Member(
@@ -22,21 +19,9 @@ class MemberRepository:
             is_active=payload.is_active,
         )
         db.add(member)
-        db.commit()
- 
-        return (
-            db.query(Member)
-            .options(
-                joinedload(Member.department),
-                joinedload(Member.access_groups),
-            )
-            .filter(Member.id == member.id)
-            .one()
-        )
+        db.flush()  # get ID, service commits
+        return member  # ← plain object, no re-fetch here
 
-    # -------------------------
-    # GET BY ID
-    # -------------------------
     @staticmethod
     def get_by_id(db: Session, member_id: int) -> Member | None:
         return (
@@ -49,9 +34,6 @@ class MemberRepository:
             .one_or_none()
         )
 
-    # -------------------------
-    # DUPLICATION CHECK
-    # -------------------------
     @staticmethod
     def exists_with_member_number(
         db: Session,
@@ -61,49 +43,37 @@ class MemberRepository:
         stmt = select(Member).where(
             func.lower(Member.member_number) == member_number.lower()
         )
-
         if exclude_id:
             stmt = stmt.where(Member.id != exclude_id)
-
         return db.execute(stmt).scalars().first() is not None
 
-    # -------------------------
-    # UPDATE
-    # -------------------------
     @staticmethod
-    def update(
-        db: Session,
-        member: Member,
-        payload: MemberUpdate,
-    ) -> Member:
-
+    def update(db: Session, member: Member, payload: MemberUpdate) -> Member:
         for field, value in payload.model_dump(exclude_unset=True).items():
             setattr(member, field, value)
-
-        db.commit()
-
-        # CRITICAL: re-fetch with relationships eagerly loaded
+        db.flush() 
+        return member
+    
+    @staticmethod
+    def get_with_relations(db: Session, member_id: int) -> Member | None:
+        """Fetch member with all relationships eagerly loaded."""
         return (
             db.query(Member)
             .options(
                 joinedload(Member.department),
                 joinedload(Member.access_groups),
             )
-            .filter(Member.id == member.id)
-            .one()
-        )
+            .filter(Member.id == member_id)
+            .one_or_none()
+        ) 
 
-    # -------------------------
-    # LIST (search + pagination)
-    # -------------------------
-    
     @staticmethod
     def list(
         db: Session,
         search: str | None = None,
         page: int = 0,
         page_size: int = 10,
-    ) -> tuple[list[tuple[Member, bool]], int]:
+    ) -> tuple[list, int]:
         has_embeddings_expr = exists(
             select(1).where(
                 and_(
@@ -118,7 +88,6 @@ class MemberRepository:
             )
         ).label("has_embeddings")
 
-        # build the main query
         stmt = (
             select(Member, has_embeddings_expr)
             .options(
@@ -149,18 +118,12 @@ class MemberRepository:
         )
 
         rows = db.execute(stmt).unique().all()
-
         members = []
         for member, has_embeddings in rows:
-            member.has_embeddings = has_embeddings  # attach flag
+            member.has_embeddings = has_embeddings
             members.append(member)
-
         return members, total
- 
 
-    # -------------------------
-    # LIST ALL ACTIVE (for dropdowns)
-    # -------------------------
     @staticmethod
     def list_all_active(db: Session) -> List[Member]:
         stmt = (
@@ -173,24 +136,15 @@ class MemberRepository:
         )
         return db.execute(stmt).scalars().all()
 
-    # -------------------------
-    # DELETE (HARD)
-    # -------------------------
     @staticmethod
     def delete(db: Session, member: Member) -> None:
         db.delete(member)
-        db.commit()
-
-        
-
-    # -------------------------
-    # BULK IMPORT
-    # -------------------------
+        db.flush()  # ← service commits
 
     @staticmethod
     def bulk_create(db: Session, members: List[Member]) -> List[Member]:
         db.add_all(members)
-        db.commit()
+        db.flush()
         for member in members:
             db.refresh(member)
         return members
@@ -206,12 +160,11 @@ class MemberRepository:
         ).scalars().all()
         return {mn.lower() for mn in rows}
 
-
     @staticmethod
     def get_department_name_map(db: Session) -> dict[str, int]:
         from app.db.models.department import Department
         rows = db.execute(
             select(Department.id, Department.name)
-            .where(Department.is_active == True)  # ← only active departments
+            .where(Department.is_active == True)
         ).all()
         return {row.name.strip().lower(): row.id for row in rows}

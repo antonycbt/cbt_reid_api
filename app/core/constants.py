@@ -7,6 +7,18 @@ USER_ROLES = {
     3: "Super Admin", 
 }
 
+TARGET_TYPE = {
+    1: "users" ,
+    2: "departments" ,
+    3: "site_hierarchies" ,
+    4: "cameras" ,
+    5: "access_groups" ,
+    6: "members" ,
+    7: "notifications" ,
+    8: "site_location_access" ,
+    9: "member_access"
+}
+
 # --------------------------------
 # EMBEDDING CONSTANTS
 # --------------------------------

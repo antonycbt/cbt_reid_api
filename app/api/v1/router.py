@@ -12,7 +12,8 @@ from app.api.v1.routes import (
     member_access,
     embeddings,
     auth,
-    tracking 
+    tracking,
+    activity_logs 
 ) 
 v1_router = APIRouter(prefix="/v1") 
 v1_router.include_router(health.router, tags=["Health"])
@@ -28,3 +29,4 @@ v1_router.include_router(site_location_access.router, prefix="/site_location_acc
 v1_router.include_router(member_access.router, prefix="/member_access", tags=["Member Acess"])
 v1_router.include_router(embeddings.router, prefix="/embeddings", tags=["Embeddings"])
 v1_router.include_router(tracking.router, prefix="/tracking", tags=["tracking"])  
+v1_router.include_router(activity_logs.router, prefix="/activity_logs", tags=["Activity Logs"])

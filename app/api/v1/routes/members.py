@@ -1,16 +1,13 @@
 import io
 import openpyxl
-from fastapi import APIRouter, HTTPException, Query ,  UploadFile, File
-from typing import Optional,List
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Depends
+from typing import Optional, List
 
-from app.schemas.member import (
-    MemberCreate,
-    MemberUpdate,
-    MemberOut,
-)
+from app.schemas.member import MemberCreate, MemberUpdate, MemberOut
 from app.services.member_service import MemberService
-from app.schemas.common import MessageResponse,BulkImportResponse
-from typing import Optional 
+from app.schemas.common import MessageResponse, BulkImportResponse
+from app.core.dependencies import get_current_user
+from app.db.models.user import User 
 
 
 
@@ -23,6 +20,7 @@ def list_all_members(
     search: str | None = None,
     page: int = 0,
     page_size: int = 10,
+    current_user: User = Depends(get_current_user),
 ):
     members, total = MemberService.list_members(
         search=search,
@@ -42,6 +40,7 @@ def list_members(
     search: Optional[str] = None,
     page: int = Query(0, ge=0),     
     page_size: int = Query(10, ge=1, le=1000),
+    current_user: User = Depends(get_current_user),
 ):
     members, total = MemberService.list_members(
         search, page, page_size
@@ -57,20 +56,19 @@ def list_members(
 # CREATE member
 # -------------------------
 @router.post("", response_model=MessageResponse[MemberOut])
-def create_member(payload: MemberCreate):
-    member = MemberService.create_member(payload)
-    return {
-        "message": "Member created successfully",
-        "data": member,
-    }
-
+def create_member(
+    payload: MemberCreate,
+    current_user: User = Depends(get_current_user),
+):
+    member = MemberService.create_member(payload, actor_id=current_user.id)
+    return {"message": "Member created successfully", "data": member}
 
 # -------------------------
 # BULK IMPORT
 # -------------------------
 
 @router.post("/bulk_import", response_model=MessageResponse[BulkImportResponse])
-async def bulk_import_members(file: UploadFile = File(...)):
+async def bulk_import_members(file: UploadFile = File(...),current_user: User = Depends(get_current_user),):
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are allowed")
 
@@ -98,7 +96,7 @@ async def bulk_import_members(file: UploadFile = File(...)):
 # GET member by ID
 # -------------------------
 @router.get("/{member_id}", response_model=MessageResponse[MemberOut])
-def get_member(member_id: int):
+def get_member(member_id: int,current_user: User = Depends(get_current_user),):
     member = MemberService.get_member(member_id)
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
@@ -115,25 +113,22 @@ def get_member(member_id: int):
 def update_member(
     member_id: int,
     payload: MemberUpdate,
+    current_user: User = Depends(get_current_user),
 ):
-    member = MemberService.update_member(
-        member_id, payload
-    )
-    return {
-        "message": "Member updated successfully",
-        "data": member,
-    }
+    member = MemberService.update_member(member_id, payload, actor_id=current_user.id)
+    return {"message": "Member updated successfully", "data": member}
 
 
 # -------------------------
 # HARD DELETE (permanent)
 # -------------------------
 @router.delete("/{member_id}", response_model=MessageResponse[None])
-def delete_member(member_id: int):
-    success = MemberService.delete_member(member_id)
+def delete_member(
+    member_id: int,
+    current_user: User = Depends(get_current_user),
+):
+    success = MemberService.delete_member(member_id, actor_id=current_user.id)
     if not success:
         raise HTTPException(status_code=404, detail="Member not found")
+    return {"message": "Member deleted permanently"}
 
-    return {
-        "message": "Member deleted permanently",
-    }

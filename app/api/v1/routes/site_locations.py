@@ -12,6 +12,8 @@ from app.schemas.common import MessageResponse
 from app.services.site_location_service import SiteLocationService
 from app.services.site_location_access_service import SiteLocationAccessService
 from app.db.session import get_db
+from app.core.dependencies import get_current_user
+from app.db.models.user import User
 
 router = APIRouter()
 
@@ -23,6 +25,7 @@ router = APIRouter()
 def list_unlinked_site_locations_by_access_group(
     access_group_id: Optional[int] = Query(None, description="Filter out linked site locations"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Return site locations that are NOT linked to the given access_group_id.
@@ -37,7 +40,11 @@ def list_unlinked_site_locations_by_access_group(
 
 # ---------------- TREE ----------------
 @router.get("/tree", response_model=MessageResponse[List[SiteLocationTreeOut]])
-def get_tree(db: Session = Depends(get_db), search: str | None = None):
+def get_tree(
+    db: Session = Depends(get_db),
+    search: str | None = None,
+    current_user: User = Depends(get_current_user),
+):
     tree = SiteLocationService.get_tree(db, search=search)
 
     return {
@@ -48,7 +55,10 @@ def get_tree(db: Session = Depends(get_db), search: str | None = None):
 
 # ---------------- ALL ----------------
 @router.get("/all", response_model=MessageResponse[List[SiteLocationOut]])
-def list_all_site_locations(db: Session = Depends(get_db)):
+def list_all_site_locations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     locations, total = SiteLocationService.list_all_site_locations(db)
 
     return {
@@ -60,7 +70,10 @@ def list_all_site_locations(db: Session = Depends(get_db)):
 
 # ---------------- FULL TREE ----------------
 @router.get("/full_tree/{site_location_id}", response_model=MessageResponse[list])
-def get_full_tree_by_site_location(site_location_id: int):
+def get_full_tree_by_site_location(
+    site_location_id: int,
+    current_user: User = Depends(get_current_user),
+):
     tree = SiteLocationService.get_full_tree_from_site_location(site_location_id)
 
     if not tree:
@@ -85,6 +98,7 @@ def list_site_locations(
     is_active: Optional[bool] = None,
     page: int = Query(0, ge=0),
     page_size: int = Query(10, ge=1, le=1000),
+    current_user: User = Depends(get_current_user),
 ):
     locations, total = SiteLocationService.list_site_locations(
         search=search,
@@ -105,7 +119,10 @@ def list_site_locations(
 
 # ---------------- CREATE ----------------
 @router.post("", response_model=MessageResponse[SiteLocationOut])
-def create_site_location(payload: SiteLocationCreate):
+def create_site_location(
+    payload: SiteLocationCreate,
+    current_user: User = Depends(get_current_user),
+):
     location = SiteLocationService.create_site_location(payload)
 
     return {
@@ -116,7 +133,10 @@ def create_site_location(payload: SiteLocationCreate):
 
 # ---------------- GET BY ID ----------------
 @router.get("/{site_location_id}", response_model=MessageResponse[SiteLocationOut])
-def get_site_location(site_location_id: int):
+def get_site_location(
+    site_location_id: int,
+    current_user: User = Depends(get_current_user),
+):
     location = SiteLocationService.get_site_location(site_location_id)
 
     if not location:
@@ -130,7 +150,11 @@ def get_site_location(site_location_id: int):
 
 # ---------------- UPDATE ----------------
 @router.put("/{site_location_id}", response_model=MessageResponse[SiteLocationOut])
-def update_site_location(site_location_id: int, payload: SiteLocationUpdate):
+def update_site_location(
+    site_location_id: int,
+    payload: SiteLocationUpdate,
+    current_user: User = Depends(get_current_user),
+):
     location = SiteLocationService.update_site_location(site_location_id, payload)
 
     return {
@@ -141,7 +165,10 @@ def update_site_location(site_location_id: int, payload: SiteLocationUpdate):
 
 # ---------------- DELETE ----------------
 @router.delete("/{site_location_id}", response_model=MessageResponse[None])
-def delete_site_location(site_location_id: int):
+def delete_site_location(
+    site_location_id: int,
+    current_user: User = Depends(get_current_user),
+):
     success = SiteLocationService.delete_site_location(site_location_id)
 
     if not success:

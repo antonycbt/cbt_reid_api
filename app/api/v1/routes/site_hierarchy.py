@@ -23,6 +23,8 @@ from sqlalchemy.orm import Session, selectinload
 from app.db.session import get_db
 from app.db.models import SiteHierarchy, SiteLocation, Camera
 from app.schemas.site_hierarchy import SiteHierarchyNode
+from app.core.dependencies import get_current_user
+from app.db.models.user import User
 
 router = APIRouter()
 
@@ -86,7 +88,10 @@ def build_tree_with_lock(
 # ---------------- ROUTE ----------------
 
 @router.get("/tree", response_model=List[SiteHierarchyNode])
-def get_site_hierarchy_tree(db: Session = Depends(get_db)):
+def get_site_hierarchy_tree(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
 
     # load hierarchy
     nodes = db.query(SiteHierarchy).options(
@@ -143,7 +148,8 @@ def list_site_hierarchies(
     search: Optional[str] = None,
     page: int = Query(0, ge=0),
     page_size: int = Query(10, ge=1, le=1000),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     used_by_camera = exists().where(
         and_(
@@ -171,7 +177,8 @@ def list_site_hierarchies(
 
 @router.get("/active_hierarchy", response_model=MessageResponse[List[SiteHierarchyOut]])
 def list_active_site_hierarchies(
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     used_by_camera = exists().where(
         and_(
@@ -216,11 +223,10 @@ def list_active_site_hierarchies(
 def create_site_hierarchy(
     payload: SiteHierarchyCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    site = SiteHierarchyService.create_site_hierarchy(db, payload)
-
+    site = SiteHierarchyService.create_site_hierarchy(db, payload, actor_id=current_user.id)
     site.children = []
-
     return {
         "message": "Site hierarchy created successfully",
         "data": SiteHierarchyOut.from_orm(site),
@@ -230,7 +236,11 @@ def create_site_hierarchy(
 
 # GET BY ID
 @router.get("/{site_hierarchy_id}", response_model=MessageResponse[SiteHierarchyOut])
-def get_site_hierarchy(site_hierarchy_id: int, db: Session = Depends(get_db)):
+def get_site_hierarchy(
+    site_hierarchy_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     site = db.query(SiteHierarchy).options(selectinload(SiteHierarchy.children)).filter(SiteHierarchy.id == site_hierarchy_id).first()
     if not site:
         raise HTTPException(status_code=404, detail="Site hierarchy not found")
@@ -248,39 +258,33 @@ def update_site_hierarchy(
     site_hierarchy_id: int,
     payload: SiteHierarchyUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     site = SiteHierarchyService.update_site_hierarchy(
-        db,
-        site_hierarchy_id,
-        payload,
+        db, site_hierarchy_id, payload, actor_id=current_user.id
     )
-
     site.children = []
-
     return {
         "message": "Site hierarchy updated successfully",
         "data": SiteHierarchyOut.from_orm(site),
-    } 
+    }
+
 
 # DELETE
 @router.delete("/{site_hierarchy_id}", response_model=MessageResponse[None])
-def delete_site_hierarchy(site_hierarchy_id: int, db: Session = Depends(get_db)):
+def delete_site_hierarchy(
+    site_hierarchy_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from app.db.models.camera import Camera  # avoid circular import
 
-    site = db.query(SiteHierarchy).filter(
-        SiteHierarchy.id == site_hierarchy_id
-    ).first()
-
-    if not site:
-        raise HTTPException(status_code=404, detail="Site hierarchy not found")
-
-    # find related site locations
+    # camera in-use check stays in route since it's a guard, not business logic
     locations = db.query(SiteLocation).filter(
         SiteLocation.site_hierarchy_id == site_hierarchy_id
     ).all()
-
     location_ids = [l.id for l in locations]
 
-    # check if any location used in camera
     in_use = db.query(Camera.id).filter(
         Camera.site_location_id.in_(location_ids)
     ).first()
@@ -291,24 +295,21 @@ def delete_site_hierarchy(site_hierarchy_id: int, db: Session = Depends(get_db))
             detail="Cannot delete. Site hierarchy is used by a camera."
         )
 
-    # delete locations via ORM (important)
-    for loc in locations:
-        db.delete(loc)
-
-    # delete hierarchy
-    db.delete(site)
-
-    db.commit()
+    success = SiteHierarchyService.delete_site_hierarchy(
+        db, site_hierarchy_id, actor_id=current_user.id
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Site hierarchy not found")
 
     return {"message": "Site hierarchy deleted successfully"}
 
 @router.get("/full_tree/{site_hierarchy_id}", response_model=MessageResponse[List[dict]])
-def get_full_hierarchy_tree(site_hierarchy_id: int):
+def get_full_hierarchy_tree(
+    site_hierarchy_id: int,
+    current_user: User = Depends(get_current_user),
+):
     tree = SiteHierarchyService.get_full_hierarchy_tree(site_hierarchy_id)
     return {
         "message": "Site hierarchy + locations tree fetched successfully",
         "data": tree
     }
-
-
-

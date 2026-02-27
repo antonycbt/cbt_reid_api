@@ -1,14 +1,61 @@
-# camera_service.py
 from fastapi import HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy import text, select
 from app.repositories.camera_repo import CameraRepository
 from app.schemas.camera import CameraCreate, CameraUpdate
 from app.db.models.camera import Camera
 from app.repositories.site_hierarchy_repo import SiteHierarchyRepository
-from sqlalchemy import select
+from app.services.activity_log_service import ActivityLogService
+from app.schemas.activity_log import ActivityDetail
+from app.core.activity_helper import (
+    snapshot,
+    build_create_changes,
+    build_update_changes,
+    build_delete_changes,
+)
 from app.db.models.site_location import SiteLocation
 from app.db.models.site_hierarchy import SiteHierarchy
+from typing import Any
+
+CAMERA_TARGET_TYPE = 4
+CAMERA_ENTITY = "camera"
+CAMERA_EXCLUDE = {"id"}
+
+
+def _get_site_location_name(db: Session, site_location_id: int) -> str | None:
+    """Resolve site_location_id → site_hierarchy name at write time."""
+    try:
+        row = db.execute(
+            text("""
+                SELECT sh.name
+                FROM site_locations sl
+                JOIN site_hierarchies sh ON sh.id = sl.site_hierarchy_id
+                WHERE sl.id = :id
+            """),
+            {"id": site_location_id},
+        ).mappings().first()
+        return row["name"] if row else None
+    except Exception:
+        return None
+
+
+def _resolve_camera_changes(db: Session, changes: dict[str, list[Any]]) -> dict[str, list[Any]]:
+    """Resolve FK integers to human-readable values at write time."""
+    resolved = {}
+    for field, (old, new) in changes.items():
+        if field == "site_location_id":
+            old_name = _get_site_location_name(db, old) if old is not None else None
+            new_name = _get_site_location_name(db, new) if new is not None else None
+            # only include if at least one side resolved
+            if old_name is not None or new_name is not None:
+                resolved["site_location"] = [old_name, new_name]
+            # if neither resolved (e.g. orphaned FK), skip the field
+        else:
+            resolved[field] = [old, new]
+    return resolved
+
+
 class CameraService:
 
     @staticmethod
@@ -16,20 +63,41 @@ class CameraService:
         return db.query(Camera).filter(Camera.is_active == True).all()
 
     @staticmethod
-    def create_camera(db: Session, payload: CameraCreate) -> Camera:
+    def create_camera(db: Session, payload: CameraCreate, actor_id: int) -> Camera:
         if payload.site_location_id is None:
-            raise HTTPException(
-                status_code=400,
-                detail="site_location_id is required"
-            )
+            raise HTTPException(status_code=400, detail="site_location_id is required")
         try:
             camera = CameraRepository.create(db, payload)
+
+            detail = ActivityDetail(
+                action="create",
+                entity=CAMERA_ENTITY,
+                changes=_resolve_camera_changes(
+                    db,
+                    build_create_changes(camera, exclude=CAMERA_EXCLUDE),
+                ),
+                meta={
+                    "actor_id": actor_id,
+                    "display_name": camera.name,
+                },
+            )
+            ActivityLogService.log(
+                db=db,
+                actor_id=actor_id,
+                target_type=CAMERA_TARGET_TYPE,
+                target_id=camera.id,
+                detail=detail,
+            )
+
+            db.commit()
+            db.refresh(camera)
             return camera
+
         except IntegrityError:
             db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Camera with this name or IP already exists"
+                detail="Camera with this name or IP already exists",
             )
 
     @staticmethod
@@ -44,43 +112,89 @@ class CameraService:
         db: Session,
         search: str | None = None,
         page: int = 0,
-        page_size: int = 10
+        page_size: int = 10,
     ):
         return CameraRepository.list(db, search, page, page_size)
 
     @staticmethod
-    def update_camera(db: Session, camera_id: int, payload: CameraUpdate) -> Camera:
+    def update_camera(db: Session, camera_id: int, payload: CameraUpdate, actor_id: int) -> Camera:
         if payload.site_location_id is None:
-            raise HTTPException(
-                status_code=400,
-                detail="site_location_id is required"
-            )
+            raise HTTPException(status_code=400, detail="site_location_id is required")
+
         camera = CameraRepository.get_by_id(db, camera_id)
         if not camera:
             raise HTTPException(status_code=404, detail="Camera not found")
+
         try:
-            updated = CameraRepository.update(db, camera, payload)
-            return updated
+            before = snapshot(camera)
+            updated_camera = CameraRepository.update(db, camera, payload)
+
+            detail = ActivityDetail(
+                action="update",
+                entity=CAMERA_ENTITY,
+                changes=_resolve_camera_changes(
+                    db,
+                    build_update_changes(before, updated_camera, exclude=CAMERA_EXCLUDE),
+                ),
+                meta={
+                    "actor_id": actor_id,
+                    "display_name": updated_camera.name,
+                },
+            )
+            ActivityLogService.log(
+                db=db,
+                actor_id=actor_id,
+                target_type=CAMERA_TARGET_TYPE,
+                target_id=camera_id,
+                detail=detail,
+            )
+
+            db.commit()
+            db.refresh(updated_camera)
+            return updated_camera
+
         except IntegrityError:
             db.rollback()
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail="Camera with this name or IP already exists"
+                detail="Camera with this name or IP already exists",
             )
 
     @staticmethod
-    def delete_camera(db: Session, camera_id: int) -> bool:
+    def delete_camera(db: Session, camera_id: int, actor_id: int) -> bool:
         camera = CameraRepository.get_by_id(db, camera_id)
         if not camera:
             return False
+
+        before = snapshot(camera)
         CameraRepository.delete(db, camera)
+
+        detail = ActivityDetail(
+            action="delete",
+            entity=CAMERA_ENTITY,
+            changes=_resolve_camera_changes(
+                db,
+                build_delete_changes(before, exclude=CAMERA_EXCLUDE),
+            ),
+            meta={
+                "actor_id": actor_id,
+                "display_name": before.get("name"),
+            },
+        )
+        ActivityLogService.log(
+            db=db,
+            actor_id=actor_id,
+            target_type=CAMERA_TARGET_TYPE,
+            target_id=camera_id,
+            detail=detail,
+        )
+
+        db.commit()
         return True
-    
 
     @staticmethod
     def bulk_import_cameras_from_rows(rows: list):
         from app.db.session import SessionLocal
-        from app.db.models.camera import Camera
 
         db = SessionLocal()
         try:
@@ -94,9 +208,12 @@ class CameraService:
                         SiteHierarchy.id.in_(fully_active_hierarchy_ids),
                     )
                 ).all()
-                site_location_name_to_id = {row.name.strip().lower(): row.id for row in location_rows}
+                site_location_name_to_id = {
+                    row.name.strip().lower(): row.id for row in location_rows
+                }
             else:
                 site_location_name_to_id = {}
+
             raw_ips = [str(row[1]).strip() for row in rows if row and row[1]]
             existing_ips = CameraRepository.get_existing_ip_addresses(db, raw_ips)
 
@@ -107,8 +224,8 @@ class CameraService:
                 if not row or not row[0]:
                     continue
 
-                name         = str(row[0]).strip() if row[0] else None
-                ip_address   = str(row[1]).strip() if row[1] else None
+                name = str(row[0]).strip() if row[0] else None
+                ip_address = str(row[1]).strip() if row[1] else None
                 site_loc_raw = str(row[2]).strip() if row[2] else None
 
                 if not name or not ip_address or not site_loc_raw:
@@ -128,12 +245,11 @@ class CameraService:
                     continue
 
                 site_location_id = site_location_name_to_id.get(site_loc_raw.lower())
-
                 if site_location_id is None:
                     skipped.append({
                         "row": i,
                         "name": name,
-                        "reason": f"Site location '{site_loc_raw}' does not exist or is not active (check if any parent hierarchy is inactive)",
+                        "reason": f"Site location '{site_loc_raw}' does not exist or is not active",
                     })
                     continue
 
