@@ -15,7 +15,10 @@ from app.services.camera_service import CameraService
 from app.db.session import get_db
 from app.db.models import Camera, SiteHierarchy 
 from app.db.models.site_location import SiteLocation 
+from app.core.dependencies import get_current_user
+from app.db.models.user import User
 from sqlalchemy import or_
+
 router = APIRouter()
 
 @router.get("/search", response_model=MessageResponse[list[dict]])
@@ -23,6 +26,7 @@ def search_cameras(
     search: str | None = Query(None, description="Search by camera or site location"),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     query = (
         db.query(Camera)
@@ -60,7 +64,10 @@ def search_cameras(
 
 # FETCH all active cameras
 @router.get("/allcameras", response_model=MessageResponse[list[dict]])
-def list_active_cameras(db: Session = Depends(get_db)):
+def list_active_cameras(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     cameras = CameraService.list_active_cameras(db)
     data = [{"id": cam.id, "name": cam.name} for cam in cameras]
     return {"message": "Active cameras fetched successfully", "data": data}
@@ -68,7 +75,10 @@ def list_active_cameras(db: Session = Depends(get_db)):
 
 # FETCH site locations 
 @router.get("/load_site_locations", response_model=MessageResponse[list[dict]])
-def list_site_locations(db: Session = Depends(get_db)):
+def list_site_locations(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     fully_active_hierarchy_ids = SiteHierarchyRepository.get_fully_active_hierarchy_ids(db)
 
     if not fully_active_hierarchy_ids:
@@ -95,9 +105,11 @@ def list_site_locations(db: Session = Depends(get_db)):
     return {"message": "Site locations fetched successfully", "data": data}
 
 
-
 @router.post("/bulk_import", response_model=MessageResponse[BulkImportResponse])
-async def bulk_import_cameras(file: UploadFile = File(...)):
+async def bulk_import_cameras(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
     if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Only .xlsx or .xls files are allowed")
 
@@ -122,22 +134,27 @@ async def bulk_import_cameras(file: UploadFile = File(...)):
 
 # CREATE camera
 @router.post("", response_model=MessageResponse[CameraOut])
-def create_camera(payload: CameraCreate, db: Session = Depends(get_db)):
-    camera = CameraService.create_camera(db, payload)
-
-    # reload with relationship eager loaded
+def create_camera(
+    payload: CameraCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    camera = CameraService.create_camera(db, payload, actor_id=current_user.id)
     camera = (
         db.query(Camera)
         .options(joinedload(Camera.site_location_rel))
         .filter(Camera.id == camera.id)
         .first()
     )
-
     return {"message": "Camera created successfully", "data": camera}
 
 # GET camera by ID
 @router.get("/{camera_id}", response_model=MessageResponse[CameraOut])
-def get_camera(camera_id: int, db: Session = Depends(get_db)):
+def get_camera(
+    camera_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     camera = (
         db.query(Camera)
         .options(joinedload(Camera.site_location_rel))
@@ -158,6 +175,7 @@ def list_cameras(
     page: int = Query(0, ge=0),
     page_size: int = Query(10, ge=1, le=100),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     cameras, total = CameraService.list_cameras(db, search, page, page_size)
 
@@ -169,20 +187,25 @@ def list_cameras(
 
 
 @router.put("/{camera_id}", response_model=MessageResponse[CameraOut])
-def update_camera(camera_id: int, payload: CameraUpdate, db: Session = Depends(get_db)):
-    """
-    Update a camera. Requires site_location_id to be set.
-    """
-    camera = CameraService.update_camera(db, camera_id, payload)  # pass db as first argument
+def update_camera(
+    camera_id: int,
+    payload: CameraUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    camera = CameraService.update_camera(db, camera_id, payload, actor_id=current_user.id)
     return {"message": "Camera updated successfully", "data": camera}
 
 
 
 # DELETE camera
 @router.delete("/{camera_id}", response_model=MessageResponse[None])
-def delete_camera(camera_id: int, db: Session = Depends(get_db)):
-    success = CameraService.delete_camera(db, camera_id)
+def delete_camera(
+    camera_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    success = CameraService.delete_camera(db, camera_id, actor_id=current_user.id)
     if not success:
         raise HTTPException(status_code=404, detail="Camera not found")
-
     return {"message": "Camera deleted successfully"}

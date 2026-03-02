@@ -1,4 +1,4 @@
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr , Field , field_validator
 from app.db.models.user import User
 from datetime import datetime, timedelta, timezone
 import jwt
@@ -30,3 +30,28 @@ class LoginResponse(BaseModel):
         }
         token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
         return cls(access_token=token)
+    
+class RegisterRequest(BaseModel):
+    first_name: str = Field(..., min_length=2, max_length=64)
+    last_name: str = Field(..., min_length=2, max_length=64)
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+    role: int = Field(..., ge=1, le=5)
+
+    @field_validator("first_name", "last_name")
+    @classmethod
+    def name_cannot_be_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()
+
+
+class RegisterResponse(BaseModel):
+    id: int
+    first_name: str
+    last_name: str
+    email: EmailStr
+    role: int
+
+    class Config:
+        from_attributes = True    

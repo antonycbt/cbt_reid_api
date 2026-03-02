@@ -60,7 +60,7 @@ class SiteHierarchyRepository:
 
             db.add(location)
 
-            db.commit()
+            db.flush()
 
         except IntegrityError:
             db.rollback()
@@ -158,7 +158,7 @@ class SiteHierarchyRepository:
         if site.parent_site_hierarchy_id:
             SiteHierarchyRepository.sync_leaf_state(db, site.parent_site_hierarchy_id)
 
-        db.commit()
+        db.flush()
         db.refresh(site)
 
         return (

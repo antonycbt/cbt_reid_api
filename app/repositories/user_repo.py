@@ -18,7 +18,7 @@ class UserRepository:
             role=payload.role,
         )
         db.add(user)
-        db.commit()
+        db.flush()
         db.refresh(user)
         return user
 
@@ -94,7 +94,7 @@ class UserRepository:
         for field, value in payload.model_dump(exclude_unset=True).items():
             setattr(user, field, value)
 
-        db.commit()
+        db.flush()
         db.refresh(user)
         return user
 
@@ -102,7 +102,7 @@ class UserRepository:
     @staticmethod
     def delete(db: Session, user: User) -> None:
         db.delete(user)
-        db.commit()
+        db.flush() 
     
     # Update last_login
     @staticmethod
