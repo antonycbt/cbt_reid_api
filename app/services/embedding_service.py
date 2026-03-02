@@ -2075,8 +2075,7 @@ def _extract_worker(member_id: int, member_name: str, camera_id: int):
                 total_body=0,
                 total_face=0,
                 total_back_body=0,
-                percent=100,
-                stage="Done",
+                stage="error",
                 message="No images to process",
             )
             return
@@ -2175,6 +2174,33 @@ def _extract_worker(member_id: int, member_name: str, camera_id: int):
         else:
             _progress_set(member_id, camera_id, message="Skipping back-body (no images)")
 
+        # ---- Validation: ensure all six embedding inputs are present before DB update ----
+        required_pairs = [
+            ("Body embeddings", body_cent),
+            ("Face embeddings", face_cent),
+            ("Back body embeddings", back_cent),
+            ("Body bank", body_bank),
+            ("Face bank", face_bank),
+            ("Back body bank", back_bank),
+        ]
+        missing = [name for name, val in required_pairs if val is None]
+        if missing:
+            missing_list = ", ".join(missing)
+            friendly = (
+                f"Missing required embedding data: {missing_list}. "
+                "Please provide the missing embedding to proceed."
+            )
+            logger.error("Extract worker validation failed: %s (member=%s cam=%s)", missing_list, member_id, camera_id)
+            _progress_set(
+                member_id,
+                camera_id,
+                stage="error",
+                message=friendly,
+                percent=100,
+            )
+            return
+
+        # ---- call the DB update as before ----
         res = _update_db_embeddings(
             member_id,
             camera_id,
@@ -2191,7 +2217,6 @@ def _extract_worker(member_id: int, member_name: str, camera_id: int):
     except Exception as e:
         logger.exception("extract worker failed")
         _progress_set(member_id, camera_id, stage="error", message=f"error: {e}")
-
 
 def _extract_worker_multi(member_id: int, member_name: str, camera_ids: List[int]):
     camera_ids = [int(c) for c in camera_ids if isinstance(c, int) or str(c).isdigit()]
