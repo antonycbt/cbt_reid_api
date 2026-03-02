@@ -7,6 +7,12 @@ USER_ROLES = {
     3: "Super Admin", 
 }
 
+MOVEMENT_TYPES = { 
+    1: "Entry", 
+    2: "Exit",  
+}
+
+
 TARGET_TYPE = {
     1: "users" ,
     2: "departments" ,
