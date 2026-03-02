@@ -298,3 +298,18 @@ class MemberService:
             }
         finally:
             db.close()
+
+    @staticmethod
+    def list_active_member_names() -> list:
+        db = SessionLocal()
+        try:
+            members = MemberRepository.list_all_active(db)
+            return [
+                {
+                    "id": m.id,
+                    "name": f"{m.first_name} {m.last_name or ''}".strip(),
+                }
+                for m in members
+            ]
+        finally:
+            db.close()         
