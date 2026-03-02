@@ -17,7 +17,7 @@ class NormalizedReportRepository:
         page_size: int,
         start_ts: Optional[datetime],
         end_ts: Optional[datetime],
-        camera_id: Optional[int],
+        site_location_id: Optional[int],   # ← changed
         member_id: Optional[int],
         movement_type: Optional[int],
         search: Optional[str],
@@ -26,8 +26,8 @@ class NormalizedReportRepository:
 
         filters = []
 
-        if camera_id is not None:
-            filters.append(NormalizedData.camera_id == camera_id)
+        if site_location_id is not None:
+            filters.append(Camera.site_location_id == site_location_id)   # ← changed
 
         if member_id is not None:
             filters.append(NormalizedData.member_id == member_id)
@@ -53,23 +53,27 @@ class NormalizedReportRepository:
                 )
             )
 
-        # ✅ COUNT
-        count_stmt = select(func.count()).select_from(NormalizedData)
-
+        # COUNT — always join Camera now (needed for site_location_id filter)
+        count_stmt = (
+            select(func.count())
+            .select_from(NormalizedData)
+            .join(Camera, NormalizedData.camera_id == Camera.id)
+            .join(Member, isouter=True)
+        )
         if filters:
-            count_stmt = count_stmt.join(Member, isouter=True).where(and_(*filters))
+            count_stmt = count_stmt.where(and_(*filters))
 
         total = self.db.execute(count_stmt).scalar() or 0
 
-        # ✅ DATA
+        # DATA
         offset = (page - 1) * page_size
-
         query = (
             select(NormalizedData)
             .options(
                 selectinload(NormalizedData.member),
                 selectinload(NormalizedData.camera),
             )
+            .join(Camera, NormalizedData.camera_id == Camera.id)   # ← explicit join
             .join(Member, isouter=True)
         )
 
@@ -83,5 +87,4 @@ class NormalizedReportRepository:
         )
 
         rows = self.db.execute(query).scalars().all()
-
         return rows, total
