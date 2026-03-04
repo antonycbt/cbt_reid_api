@@ -16,10 +16,11 @@ from app.core.activity_helper import (
 )
 from app.db.models.site_location import SiteLocation
 from app.db.models.site_hierarchy import SiteHierarchy
+from app.core.constants import TARGET_TYPE
 from typing import Any
 
 CAMERA_TARGET_TYPE = 4
-CAMERA_ENTITY = "camera"
+CAMERA_ENTITY = TARGET_TYPE[CAMERA_TARGET_TYPE]["entity"]
 CAMERA_EXCLUDE = {"id"}
 
 
@@ -193,7 +194,7 @@ class CameraService:
         return True
 
     @staticmethod
-    def bulk_import_cameras_from_rows(rows: list):
+    def bulk_import_cameras_from_rows(rows: list,actor_id: int = 0):
         from app.db.session import SessionLocal
 
         db = SessionLocal()
@@ -266,6 +267,25 @@ class CameraService:
                 db.add_all(cameras_to_create)
                 db.commit()
                 added_count = len(cameras_to_create)
+
+            # ── Activity log for bulk import ──────────────────────────────
+            if added_count > 0:
+                detail = ActivityDetail(
+                    action="bulk_import",
+                    entity=CAMERA_ENTITY,
+                    changes={},
+                    meta={
+                        "display_name": f"{added_count} {'camera' if added_count == 1 else 'cameras'} added",
+                    },
+                )
+                ActivityLogService.log(
+                    db=db,
+                    actor_id=actor_id,
+                    target_type=CAMERA_TARGET_TYPE,
+                    target_id=0,
+                    detail=detail,
+                )
+                db.commit()    
 
             total_skipped = len(skipped)
             message = (

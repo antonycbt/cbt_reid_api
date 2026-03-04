@@ -17,9 +17,10 @@ from app.core.activity_helper import (
     build_delete_changes,
 )
 from typing import List, Optional, Any
+from app.core.constants import TARGET_TYPE
 
 SITE_HIERARCHY_TARGET_TYPE = 3
-SITE_HIERARCHY_ENTITY = "site_hierarchy"
+SITE_HIERARCHY_ENTITY = TARGET_TYPE[SITE_HIERARCHY_TARGET_TYPE]["entity"]
 SITE_HIERARCHY_EXCLUDE = {"id"}
 
 

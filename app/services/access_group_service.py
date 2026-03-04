@@ -16,10 +16,11 @@ from app.core.activity_helper import (
 )
 from app.db.models import AccessGroup, Member
 from app.db.models.associations import member_access
+from app.core.constants import TARGET_TYPE
 from typing import Any
 
 ACCESS_GROUP_TARGET_TYPE = 5
-ACCESS_GROUP_ENTITY = "access_group"
+ACCESS_GROUP_ENTITY = TARGET_TYPE[ACCESS_GROUP_TARGET_TYPE]["entity"]
 ACCESS_GROUP_EXCLUDE = {"id"}
 
 

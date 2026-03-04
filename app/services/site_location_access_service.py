@@ -10,9 +10,10 @@ from app.schemas.activity_log import ActivityDetail
 from typing import Optional, List
 from app.db.models import SiteHierarchy
 from app.repositories.site_hierarchy_repo import SiteHierarchyRepository
+from app.core.constants import TARGET_TYPE
 
 SITE_LOCATION_ACCESS_TARGET_TYPE = 8
-SITE_LOCATION_ACCESS_ENTITY = "site_location_access"
+SITE_LOCATION_ACCESS_ENTITY = TARGET_TYPE[SITE_LOCATION_ACCESS_TARGET_TYPE]["entity"]
 
 
 def _get_location_name(db: Session, site_location_id: int) -> str:

@@ -124,17 +124,6 @@ class MemberRepository:
             members.append(member)
         return members, total
 
-    @staticmethod
-    def list_all_active(db: Session) -> List[Member]:
-        stmt = (
-            select(Member)
-            .where(Member.is_active.is_(True))
-            .order_by(
-                func.lower(Member.first_name).asc(),
-                func.lower(Member.last_name).asc(),
-            )
-        )
-        return db.execute(stmt).scalars().all()
 
     @staticmethod
     def delete(db: Session, member: Member) -> None:

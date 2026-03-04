@@ -33,6 +33,10 @@ class ActivityLogService:
             return f"{entity_label} updated{name_label}"
         elif action == "delete":
             return f"{entity_label} deleted{name_label}"
+        elif action == "login":                          # ← add this
+            return f"{name or entity_label} logged in"
+        elif action == "bulk_import":
+            return f"{name}" if name else f"{entity_label} bulk imported"
         return f"{entity_label} {action}{name_label}"
 
     @staticmethod

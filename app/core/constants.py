@@ -14,15 +14,15 @@ MOVEMENT_TYPES = {
 
 
 TARGET_TYPE = {
-    1: "users" ,
-    2: "departments" ,
-    3: "site_hierarchies" ,
-    4: "cameras" ,
-    5: "access_groups" ,
-    6: "members" ,
-    7: "notifications" ,
-    8: "site_location_access" ,
-    9: "member_access"
+    1: {"database": "users",           "entity": "user"},
+    2: {"database": "departments",     "entity": "department"},
+    3: {"database": "site_hierarchies","entity": "site_hierarchy"},
+    4: {"database": "cameras",         "entity": "camera"},
+    5: {"database": "access_groups",   "entity": "access_group"},
+    6: {"database": "members",         "entity": "member"},
+    7: {"database": "notifications",   "entity": "notification"},
+    8: {"database": "site_location_access", "entity": "site_location_access"},
+    9: {"database": "member_access",   "entity": "member_access"},
 }
 
 # --------------------------------

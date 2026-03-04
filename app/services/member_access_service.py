@@ -7,9 +7,11 @@ from app.schemas.member_access import MemberAccessCreate, MemberAccessBulkCreate
 from app.db.models.member import member_access
 from app.services.activity_log_service import ActivityLogService
 from app.schemas.activity_log import ActivityDetail
+from app.core.constants import TARGET_TYPE
+
 
 MEMBER_ACCESS_TARGET_TYPE = 9
-MEMBER_ACCESS_ENTITY = "member_access"
+MEMBER_ACCESS_ENTITY = TARGET_TYPE[MEMBER_ACCESS_TARGET_TYPE]["entity"]
 
 
 def _get_member_name(db: Session, member_id: int) -> str:

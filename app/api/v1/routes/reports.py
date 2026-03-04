@@ -2,13 +2,46 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
 
 from app.schemas.common import MessageResponse
 from app.services.report_service import NormalizedReportService
-from app.db.session import get_db
+from app.core.dependencies import get_current_user
+from app.db.models.user import User
+from app.core.constants import MOVEMENT_TYPES
 
 router = APIRouter()
+
+
+@router.get("/movement_types", response_model=MessageResponse[dict])
+def get_movement_types(current_user: User = Depends(get_current_user)):
+    return {
+        "message": "Movement types fetched successfully",
+        "data": MOVEMENT_TYPES,
+    }
+
+
+@router.get("/site_locations", response_model=MessageResponse[list])
+def list_site_locations(
+    search: Optional[str] = Query(None),
+    current_user: User = Depends(get_current_user),
+):
+    data = NormalizedReportService.list_site_locations(search=search)
+    return {"message": "Site locations fetched successfully", "data": data}
+
+
+@router.get("/active/names", response_model=MessageResponse[list])
+def list_active_member_names(
+    search: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+):
+    members = NormalizedReportService.list_active_member_names(
+        search=search, limit=limit
+    )
+    return {
+        "message": "Active member names fetched successfully",
+        "data": members,
+    }
 
 
 @router.get("/member_presence_report", response_model=MessageResponse[dict])
@@ -22,23 +55,10 @@ def get_normalized_report(
     movement_type: Optional[int] = Query(None),
     search: Optional[str] = Query(None),
     min_match: Optional[int] = Query(None),
-    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    service = NormalizedReportService(db)
-
-    result = service.get_report(
-        page,
-        page_size,
-        start_ts,
-        end_ts,
-        site_location_id,
-        member_id,
-        movement_type,
-        search,
-        min_match,
+    result = NormalizedReportService.get_report(
+        page, page_size, start_ts, end_ts,
+        site_location_id, member_id, movement_type, search, min_match,
     )
-
-    return {
-        "message": "Report fetched successfully",
-        "data": result,
-    }
+    return {"message": "Report fetched successfully", "data": result}
