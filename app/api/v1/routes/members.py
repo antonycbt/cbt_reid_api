@@ -84,24 +84,11 @@ async def bulk_import_members(file: UploadFile = File(...),current_user: User = 
     if not rows:
         raise HTTPException(status_code=400, detail="No data rows found in the uploaded file.")
 
-    result = MemberService.bulk_import_members_from_rows(rows)
+    result = MemberService.bulk_import_members_from_rows(rows,actor_id=current_user.id)
 
     return {
         "message": result["message"],
         "data": BulkImportResponse(**result),
-    }
-
-# -------------------------
-# LIST active members (name only)
-# -------------------------
-@router.get("/active/names")
-def list_active_member_names(
-    current_user: User = Depends(get_current_user),
-):
-    members = MemberService.list_active_member_names()
-    return {
-        "message": "Active member names fetched successfully",
-        "data": members,
     }
 
 

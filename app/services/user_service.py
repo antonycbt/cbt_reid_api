@@ -6,12 +6,12 @@ from app.core.security import hash_password
 from app.services.activity_log_service import ActivityLogService
 from app.schemas.activity_log import ActivityDetail
 from app.core.activity_helper import snapshot, build_create_changes, build_update_changes, build_delete_changes
-from app.core.constants import USER_ROLES
+from app.core.constants import USER_ROLES , TARGET_TYPE
 from fastapi import HTTPException, status
 from typing import Any
 
 USER_TARGET_TYPE = 1
-USER_ENTITY = "user"
+USER_ENTITY = TARGET_TYPE[USER_TARGET_TYPE]["entity"]
 USER_EXCLUDE = {"id", "created_ts", "last_login_ts", "password"}
 
 

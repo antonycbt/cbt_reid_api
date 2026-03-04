@@ -125,7 +125,7 @@ async def bulk_import_cameras(
     if not rows:
         raise HTTPException(status_code=400, detail="No data rows found in the uploaded file.")
 
-    result = CameraService.bulk_import_cameras_from_rows(rows)
+    result = CameraService.bulk_import_cameras_from_rows(rows,actor_id=current_user.id)
 
     return {
         "message": result["message"],

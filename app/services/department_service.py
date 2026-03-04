@@ -1,5 +1,6 @@
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
+from app.core.constants import TARGET_TYPE
 
 from app.db.session import SessionLocal
 from app.repositories.department_repo import DepartmentRepository
@@ -15,7 +16,7 @@ from app.core.activity_helper import (
 )
 
 DEPARTMENT_TARGET_TYPE = 2
-DEPARTMENT_ENTITY = "department"
+DEPARTMENT_ENTITY = TARGET_TYPE[DEPARTMENT_TARGET_TYPE]["entity"]
 DEPARTMENT_EXCLUDE = {"id", "created_ts"}
 
 

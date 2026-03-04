@@ -16,9 +16,11 @@ from app.core.activity_helper import (
     build_delete_changes,
 )
 from typing import Any
+from app.core.constants import TARGET_TYPE
+
 
 MEMBER_TARGET_TYPE = 6
-MEMBER_ENTITY = "member"
+MEMBER_ENTITY = TARGET_TYPE[MEMBER_TARGET_TYPE]["entity"]
 MEMBER_EXCLUDE = {"id", "created_ts"}
 
 
@@ -221,7 +223,7 @@ class MemberService:
         return members, total
 
     @staticmethod
-    def bulk_import_members_from_rows(rows: list):
+    def bulk_import_members_from_rows(rows: list,actor_id: int = 0):
         db = SessionLocal()
         try:
             dept_name_to_id = MemberRepository.get_department_name_map(db)
@@ -282,6 +284,25 @@ class MemberService:
                 db.commit()  # bulk import keeps its own commit, no activity log
                 added_count = len(members_to_create)
 
+                    # ── Activity log for bulk import ──────────────────────────────
+            if added_count > 0:
+                detail = ActivityDetail(
+                    action="bulk_import",
+                    entity=MEMBER_ENTITY,
+                    changes={},
+                    meta={
+                        "display_name": f"{added_count} {'member' if added_count == 1 else 'members'} added",
+                    },
+                )
+                ActivityLogService.log(
+                    db=db,
+                    actor_id=actor_id,
+                    target_type=MEMBER_TARGET_TYPE,
+                    target_id=0,
+                    detail=detail,
+                )
+                db.commit()    
+
             total_skipped = len(skipped)
             message = (
                 f"{added_count} {'entry' if added_count == 1 else 'entries'} added successfully. "
@@ -297,19 +318,4 @@ class MemberService:
                 "skipped": skipped,
             }
         finally:
-            db.close()
-
-    @staticmethod
-    def list_active_member_names() -> list:
-        db = SessionLocal()
-        try:
-            members = MemberRepository.list_all_active(db)
-            return [
-                {
-                    "id": m.id,
-                    "name": f"{m.first_name} {m.last_name or ''}".strip(),
-                }
-                for m in members
-            ]
-        finally:
-            db.close()         
+            db.close()       
