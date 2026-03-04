@@ -50,71 +50,26 @@ def _sleep_until(deadline: float) -> None:
         time.sleep(dt)
 
 
-def _snapshot_from_get_result(ret) -> Tuple[Optional[np.ndarray], float, Optional[int]]:
-    """Normalize `buf.get()` return values across versions.
-
-    Supported get() shapes seen across v1/v2 buffers:
-      - frame
-      - (frame, ts)
-      - (frame, ts, meta)
-      - (frame, ts, meta, seq)
-
-    Returns: (frame, ts, seq)
-    """
-    frame: Optional[np.ndarray] = None
-    ts: float = 0.0
-    seq: Optional[int] = None
-
-    if isinstance(ret, (list, tuple)):
-        if len(ret) >= 1:
-            frame = _ensure_frame(ret[0])
-        if len(ret) >= 2 and ret[1] is not None:
-            try:
-                ts = float(ret[1])
-            except Exception:
-                ts = 0.0
-        if len(ret) >= 4 and ret[3] is not None:
-            try:
-                seq = int(ret[3])
-            except Exception:
-                seq = None
-    else:
-        frame = _ensure_frame(ret)
-
-    return frame, float(ts), seq
-
-
 def mjpeg_generator(buf: RenderedFrame, max_fps: int = 15, jpeg_quality: int = 80):
-    """Streaming MJPEG generator.
-
-    Fixes the crash you hit:
-      ValueError: too many values to unpack (expected 3)
-
-    That happens because different RenderedFrame buffers return different tuple
-    sizes from `get()`. This implementation is defensive and supports:
-      - wait_jpeg() buffers (preferred, cached JPEG)
-      - get() buffers returning 1/2/3/4 values
-
-    It also:
-      - runs on a monotonic FPS scheduler (less jitter)
-      - reuses last JPEG if no new frame is available
+    """
+    Smoother MJPEG:
+    - Stable monotonic scheduler (less jitter)
+    - Prefers buf.wait_jpeg() (cached JPEG, far less CPU)
+    - Drops old frames (sends latest)
+    - Reuses last_jpg if no new data (smooth continuous stream)
     """
     max_fps = int(max(1, min(30, max_fps)))
     min_dt = 1.0 / float(max_fps)
 
     has_wait_jpeg = hasattr(buf, "wait_jpeg")
-    has_get = hasattr(buf, "get")
 
-    # Change detectors
+    last_seq = -1
     last_ts = 0.0
-    last_seq: Optional[int] = None
-    last_frame_id: Optional[int] = None
-
     last_jpg: Optional[bytes] = None
 
     next_send = time.monotonic()
 
-    # Optional: some buffers enable jpeg caching only when a client is attached
+    # Tell buffer we have an active MJPEG client (helps caching policy)
     if hasattr(buf, "add_client"):
         try:
             buf.add_client()
@@ -125,57 +80,36 @@ def mjpeg_generator(buf: RenderedFrame, max_fps: int = 15, jpeg_quality: int = 8
         while True:
             _sleep_until(next_send)
 
-            updated = False
-
-            # Preferred path: ask buffer for cached JPEG (fast & low CPU)
             if has_wait_jpeg:
-                try:
-                    # Try a couple of non-blocking pulls to land on the newest ts
-                    for _ in range(3):
-                        jpg, ts = buf.wait_jpeg(last_ts, timeout=0.0, jpeg_quality=jpeg_quality)  # type: ignore[attr-defined]
-                        if jpg is not None and float(ts) > float(last_ts):
-                            last_jpg = jpg
-                            last_ts = float(ts)
-                            updated = True
-                        else:
-                            break
-                except Exception:
-                    # ignore and fall back to get()
-                    pass
-
-            # Fallback: pull raw frame via get() and encode here
-            if (not updated) and has_get:
-                try:
-                    ret = buf.get()  # type: ignore[misc]
-                except Exception:
-                    ret = None
-
-                frame, ts, seq = _snapshot_from_get_result(ret)
-                if frame is not None:
-                    if seq is not None:
-                        changed = (last_seq is None) or (int(seq) != int(last_seq))
-                    elif ts > 0:
-                        changed = float(ts) > float(last_ts)
+                # try a few non-blocking pulls to land on newest ts
+                for _ in range(3):
+                    jpg, ts = buf.wait_jpeg(last_ts, timeout=0.0, jpeg_quality=jpeg_quality)  # type: ignore[attr-defined]
+                    if ts > last_ts and jpg is not None:
+                        last_ts = float(ts)
+                        last_jpg = jpg
                     else:
-                        cur_id = id(frame)
-                        changed = (last_frame_id is None) or (int(cur_id) != int(last_frame_id))
-                        last_frame_id = int(cur_id)
-
-                    if last_jpg is None or changed:
-                        jpg = _encode_jpeg(frame, jpeg_quality)
-                        if jpg is not None:
-                            last_jpg = jpg
-                            if ts > 0:
-                                last_ts = float(ts)
-                            if seq is not None:
-                                last_seq = int(seq)
+                        break
+            else:
+                for _ in range(3):
+                    frm, _ts, _meta, seq = buf.wait_for_seq(last_seq, timeout=0.0)
+                    if int(seq) != int(last_seq):
+                        last_seq = int(seq)
+                    else:
+                        break
 
             if last_jpg is None:
-                ph = _placeholder(text="Starting camera / waiting for first frame...")
-                last_jpg = _encode_jpeg(ph, jpeg_quality)
+                frm, _ts, _meta, seq = buf.wait_for_seq(last_seq, timeout=0.0)
+                last_seq = int(seq)
+                frame = _ensure_frame(frm)
+                if frame is None:
+                    frame = _placeholder(text="Starting camera / waiting for first frame...")
+
+                last_jpg = _encode_jpeg(frame, jpeg_quality)
                 if last_jpg is None:
-                    time.sleep(0.02)
-                    continue
+                    last_jpg = _encode_jpeg(_placeholder(text="JPEG encode error"), jpeg_quality)
+                    if last_jpg is None:
+                        time.sleep(0.02)
+                        continue
 
             yield _BOUNDARY + _HEADER + last_jpg + _TAIL
 
@@ -215,7 +149,7 @@ def _resize_cover(img: np.ndarray, w: int, h: int) -> np.ndarray:
     r = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_LINEAR)
     x1 = max(0, (nw - w) // 2)
     y1 = max(0, (nh - h) // 2)
-    out = r[y1 : y1 + h, x1 : x1 + w]
+    out = r[y1:y1 + h, x1:x1 + w]
     if out.shape[0] != h or out.shape[1] != w:
         out = cv2.resize(out, (w, h), interpolation=cv2.INTER_LINEAR)
     return out
@@ -231,7 +165,7 @@ def _resize_contain(img: np.ndarray, w: int, h: int) -> np.ndarray:
     out = np.zeros((h, w, 3), dtype=np.uint8)
     x1 = (w - nw) // 2
     y1 = (h - nh) // 2
-    out[y1 : y1 + nh, x1 : x1 + nw] = r
+    out[y1:y1 + nh, x1:x1 + nw] = r
     return out
 
 
@@ -253,7 +187,7 @@ def _make_grid(frames: List[np.ndarray], out_w: int, out_h: int, mode: str, rows
     row_imgs = []
     idx = 0
     for _r in range(rows):
-        row_imgs.append(np.concatenate(tiles[idx : idx + cols], axis=1))
+        row_imgs.append(np.concatenate(tiles[idx:idx + cols], axis=1))
         idx += cols
 
     grid = np.concatenate(row_imgs, axis=0)
@@ -272,26 +206,21 @@ def mjpeg_generator_multi(
     grid_rows: int = 0,
     grid_cols: int = 0,
 ):
-    """Multi-cam MJPEG grid stream.
-
-    Also defensive about `buf.get()` return shapes (1/2/3/4 values).
-
-    It will rebuild the grid only when any source changes (ts/seq/id), and
-    otherwise reuses the last encoded grid to reduce CPU.
+    """
+    Smoother multi-cam MJPEG:
+    - Stable monotonic FPS scheduler
+    - Always uses latest frames (drops old)
+    - Reuses last encoded grid if nothing changes (reduces CPU → smoother)
     """
     max_fps = int(max(1, min(30, max_fps)))
     min_dt = 1.0 / float(max_fps)
 
-    # Per-buffer change detectors
-    last_ts: List[float] = [0.0 for _ in bufs]
-    last_seq: List[Optional[int]] = [None for _ in bufs]
-    last_id: List[Optional[int]] = [None for _ in bufs]
-
+    last_seqs = [-1 for _ in bufs]
     last_jpg: Optional[bytes] = None
 
     next_send = time.monotonic()
 
-    # Optional: mark active clients
+    # mark clients (optional)
     for b in bufs:
         if hasattr(b, "add_client"):
             try:
@@ -306,35 +235,20 @@ def mjpeg_generator_multi(
             frames: List[np.ndarray] = []
             any_changed = False
 
+            # Pull latest from each buffer without blocking
             for i, b in enumerate(bufs):
-                ret = None
-                if hasattr(b, "get"):
-                    try:
-                        ret = b.get()  # type: ignore[misc]
-                    except Exception:
-                        ret = None
+                frm, _ts, _meta, seq = b.wait_for_seq(last_seqs[i], timeout=0.0)
+                s = int(seq)
+                if s != int(last_seqs[i]):
+                    any_changed = True
+                    last_seqs[i] = s
 
-                frame, ts, seq = _snapshot_from_get_result(ret)
+                frame = _ensure_frame(frm)
                 if frame is None:
                     frame = _placeholder(text=f"Waiting cam {i} ...")
-
-                # Determine if this source changed since last tick
-                if seq is not None:
-                    if last_seq[i] is None or int(seq) != int(last_seq[i]):
-                        any_changed = True
-                        last_seq[i] = int(seq)
-                elif ts > 0:
-                    if float(ts) > float(last_ts[i]):
-                        any_changed = True
-                        last_ts[i] = float(ts)
-                else:
-                    cur_id = id(frame)
-                    if last_id[i] is None or int(cur_id) != int(last_id[i]):
-                        any_changed = True
-                        last_id[i] = int(cur_id)
-
                 frames.append(frame)
 
+            # If nothing changed and we have a cached grid jpg, reuse it
             if (not any_changed) and (last_jpg is not None):
                 yield _BOUNDARY + _HEADER + last_jpg + _TAIL
             else:

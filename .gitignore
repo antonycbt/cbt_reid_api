@@ -39,3 +39,6 @@ build/
 # alembic/versions/*.pyc
 
 crops/
+
+# CSV outputs
+csv_output/

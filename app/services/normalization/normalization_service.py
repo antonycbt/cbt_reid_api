@@ -43,18 +43,20 @@ class NormalizationService:
             print("-----------------------------------------ROWS is empty", flush=True)
             return []
 
-        # debug: show a few sample rows (don't dump everything if many rows)
+        # Debug preview
         for i, r in enumerate(rows[:5]):
             try:
-                # try to show attribute dict; adjust if row is tuple/dict/model
-                print(f"[TRANSFORM] row[{i}]: type={type(r)} repr=", getattr(r, '__dict__', repr(r)), flush=True)
+                print(
+                    f"[TRANSFORM] row[{i}]: type={type(r)} repr=",
+                    getattr(r, "__dict__", repr(r)),
+                    flush=True,
+                )
             except Exception as ex:
                 print("[TRANSFORM] failed to print row preview:", ex, flush=True)
 
         grouped = defaultdict(list)
-        for r in rows:
-            # adapt depending on row shape (namedtuple / SQLAlchemy row proxy / dict)
-            # try attribute access, then dict access, then index 0 fallback
+
+        for idx, r in enumerate(rows):
             guest_temp_id = None
             member_id = None
             camera_id = None
@@ -62,8 +64,8 @@ class NormalizationService:
             match_value = None
             data_ts = None
 
+            # --- ORM attribute access ---
             try:
-                # try attribute style (ORM object)
                 guest_temp_id = getattr(r, "guest_temp_id", None)
                 member_id = getattr(r, "member_id", None)
                 camera_id = getattr(r, "camera_id", None)
@@ -73,7 +75,7 @@ class NormalizationService:
             except Exception:
                 pass
 
-            # fallback if row is dict-like
+            # --- dict fallback ---
             if isinstance(r, dict):
                 guest_temp_id = r.get("guest_temp_id", guest_temp_id)
                 member_id = r.get("member_id", member_id)
@@ -82,9 +84,20 @@ class NormalizationService:
                 match_value = r.get("match_value", match_value)
                 data_ts = r.get("data_ts", data_ts)
 
-            # final fallback for sequences/tuples: don't rely on this unless you know schema
-            # group by guest_temp_id if present else member_id else camera+ts window
-            key = guest_temp_id if guest_temp_id else f"member_{member_id}"
+            # -----------------------------
+            # 🔐 SAFE GROUPING KEY LOGIC
+            # -----------------------------
+            if guest_temp_id:
+                key = f"guest_{guest_temp_id}"
+
+            elif member_id:
+                # keep camera separated to avoid merging across cameras
+                key = f"member_{member_id}_cam_{camera_id}"
+
+            else:
+                # absolute fallback — unique per row (prevents collapsing)
+                key = f"row_{idx}"
+
             grouped[key].append({
                 "member_id": member_id,
                 "guest_temp_id": guest_temp_id,
@@ -95,72 +108,99 @@ class NormalizationService:
             })
 
         results = []
+
+        # -----------------------------
+        # NORMALIZATION
+        # -----------------------------
         for key, group in grouped.items():
-            # collect vectors that are proper lists of numbers
+
             vectors = []
             match_vals = []
             timestamps = []
 
             for item in group:
+
                 vec = item["guest_data_vector"]
-                if vec is None:
-                    pass
-                else:
-                    # If JSON string, parse it. If dict with key 'vector' adapt as needed.
+
+                if vec is not None:
+
+                    # JSON string case
                     if isinstance(vec, str):
                         try:
                             vec = json.loads(vec)
                         except Exception as e:
-                            print("[TRANSFORM] failed to json.loads vector:", e, "vec repr:", vec, flush=True)
+                            print(
+                                "[TRANSFORM] failed to json.loads vector:",
+                                e,
+                                flush=True,
+                            )
                             vec = None
 
-                    # if it's dict maybe vector is under some key; print for diagnosis
+                    # dict case
                     if isinstance(vec, dict):
-                        # print("[TRANSFORM] vector is dict; item:", vec, flush=True)
-                        # try common keys:
                         if "vector" in vec:
                             vec = vec["vector"]
                         else:
                             vec = None
 
+                    # list case
                     if isinstance(vec, list):
-                        # ensure elements are numeric
                         try:
                             vec = [float(x) for x in vec]
                             vectors.append(vec)
                         except Exception as e:
-                            print("[TRANSFORM] vector contains non-numeric item:", e, "vec:", vec, flush=True)
-                    # else:
-                    #     if vec is not None:
-                    #         print("[TRANSFORM] unsupported vector type:", type(vec), "value:", vec, flush=True)
+                            print(
+                                "[TRANSFORM] vector contains non-numeric item:",
+                                e,
+                                flush=True,
+                            )
 
                 if item["match_value"] is not None:
                     try:
                         match_vals.append(float(item["match_value"]))
                     except Exception:
-                        print("[TRANSFORM] bad match_value:", item["match_value"], flush=True)
+                        print(
+                            "[TRANSFORM] bad match_value:",
+                            item["match_value"],
+                            flush=True,
+                        )
 
                 if item["data_ts"] is not None:
                     timestamps.append(item["data_ts"])
 
-            # compute averages
+            # -----------------------------
+            # AVERAGING (safe)
+            # -----------------------------
             avg_vector = None
+
             if vectors:
                 L = len(vectors[0])
-                # ensure all vectors same length
-                if not all(len(v) == L for v in vectors):
-                    print("[TRANSFORM] vector lengths differ within group; skipping average for group", key, flush=True)
-                    avg_vector = None
-                else:
-                    avg_vector = []
-                    for i in range(L):
-                        col_sum = sum(v[i] for v in vectors)
-                        avg_vector.append(col_sum / len(vectors))
 
-            avg_match = (sum(match_vals) / len(match_vals)) if match_vals else None
-            movement_ts = max(timestamps) if timestamps else datetime.utcnow()
+                if all(len(v) == L for v in vectors):
+                    avg_vector = [
+                        sum(v[i] for v in vectors) / len(vectors)
+                        for i in range(L)
+                    ]
+                else:
+                    print(
+                        f"[TRANSFORM] vector length mismatch in group {key}",
+                        flush=True,
+                    )
+
+            avg_match = (
+                sum(match_vals) / len(match_vals)
+                if match_vals
+                else None
+            )
+
+            movement_ts = (
+                max(timestamps)
+                if timestamps
+                else datetime.utcnow()
+            )
 
             example = group[0]
+
             results.append({
                 "member_id": example["member_id"],
                 "guest_temp_id": example["guest_temp_id"],
@@ -171,5 +211,9 @@ class NormalizationService:
                 "average_match_value": avg_match,
             })
 
-        print(f"[TRANSFORM] produced {len(results)} normalized rows", flush=True)
+        print(
+            f"[TRANSFORM] produced {len(results)} normalized rows",
+            flush=True,
+        )
+
         return results
