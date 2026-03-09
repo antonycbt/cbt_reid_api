@@ -1,11 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-UPDATED: member_embeddings DB schema + 2-slot (0.5MB+0.5MB) rolling daily banks + InsightFace det_score>=0.75 gating
+UPDATED (2026-03-05):
+- member_embeddings DB schema + 2-slot (slot_mb+slot_mb) rolling daily banks
+- InsightFace det_score >= --embed-min-face-det-score gating
+- ✅ FIX: Service/TrackingRunner now also saves segmented videos (same logic as main GUI runner)
+- ✅ NEW: Segmented (hourly) CSV snapshots written alongside live CSV:
+    - Rotates every --csv-segment-seconds (default: uses --video-segment-seconds if set)
+    - Writes a segment CSV ONLY if any detection happened in that segment (at least one known name drawn)
+    - Keeps existing live CSV writing behavior (overwrite the live CSV path)
 
-Save as: updated_tracking_member_embeddings_rollingslots.py
-
-Example run:
-python updated_tracking_member_embeddings_rollingslots.py   --use-db --db-url "postgresql://USER:PASS@HOST:5432/DB"   --src rtsp://... rtsp://...   --camera-ids 3 7   --use-face   --update-db-embeddings   --embed-min-face-det-score 0.75   --update-face-sim-thresh 0.75   --embeddings-slot-mb 0.5   --embeddings-flush-seconds 10   --embeddings-min-sample-seconds 0.5   --db-refresh-seconds 30   --save-csv   --show
+Save as: updated_tracking_member_embeddings_rollingslots_segmentedcsv_video_fix.py
 """
 
 from __future__ import annotations
@@ -601,7 +605,7 @@ class EmbeddingSampleLogger:
 
 
 # ----------------------------
-# ✅ Embedding updater: 2-slot rolling (slot_mb + slot_mb = 1MB total)
+# ✅ Embedding updater: 2-slot rolling (slot_mb + slot_mb = total bank)
 # ----------------------------
 @dataclass
 class EmbeddingSample:
@@ -626,10 +630,8 @@ class EmbeddingDBUpdater:
       - keep the other slot (yesterday)
       - append new samples into today's slot up to capacity
     Bootstrap:
-      - if both slots are empty, we allow filling BOTH slots (so day-1 can reach 1MB)
+      - if both slots are empty, we allow filling BOTH slots (so day-1 can reach full 2*slot)
     """
-
-
     def __init__(
         self,
         db_url: str,
@@ -1412,7 +1414,6 @@ class GalleryManager:
     def snapshot(self) -> tuple[dict[int, list[PersonEntry]], FaceGallery, dict[str, int]]:
         with self._lock:
             return dict(self.people_by_cam), self.face_gallery, dict(self.name_to_member_id)
-
 
 
 # ----------------------------
@@ -2466,19 +2467,182 @@ class SummaryReport:
         self._write_snapshot_csv(path, names_order, logs, totals)
 
 
-def live_csv_writer_loop(report: SummaryReport, path: str, interval_s: float, stop_evt: threading.Event) -> None:
+def live_csv_writer_loop(report, path: str, interval_s: float, stop_evt: threading.Event) -> None:
     base = float(interval_s)
     if base <= 0:
         return
     backoff = base
     while not stop_evt.is_set():
         try:
-            report.write_csv_live(path)
+            if report is not None:
+                # If we are in segmented mode, always write into the CURRENT segment CSV file
+                # (unique per segment). This prevents a single CSV from being overwritten at
+                # each segment boundary.
+                if report.__class__.__name__ == "SegmentedSummaryReport":
+                    report.write_csv_live("")
+                else:
+                    report.write_csv_live(path)
             backoff = base
         except Exception as e:
             print("[WARN] Live CSV write failed:", e)
             backoff = min(60.0, max(base, backoff * 2.0))
         stop_evt.wait(backoff)
+
+
+# ----------------------------
+# ✅ Segmented CSV writer (hourly) - mirrors video segmentation
+# ----------------------------
+class SegmentedSummaryReport:
+    """
+    Wraps SummaryReport but:
+      - Rotates internal report every `segment_seconds`
+      - Writes a finalized per-segment CSV ONLY if there was at least one detection in that segment
+      - Keeps a live CSV (args.csv) representing the CURRENT segment (via write_csv_live)
+    """
+    def __init__(
+        self,
+        num_cams: int,
+        gap_seconds: float,
+        time_format: str,
+        segment_seconds: float,
+        segments_dir: str,
+        segment_prefix: str = "summary",
+        write_if_any_detection: bool = True,
+        log_prefix: str = "[CSV-SEG]",
+    ):
+        self.num_cams = int(max(1, num_cams))
+        self.gap_seconds = float(max(0.0, gap_seconds))
+        self.time_format = str(time_format or "%H:%M:%S")
+
+        self.segment_seconds = float(max(0.0, segment_seconds or 0.0))
+        self.segments_dir = str(segments_dir or "csv_output")
+        self.segment_prefix = str(segment_prefix or "summary")
+        self.write_if_any_detection = bool(write_if_any_detection)
+        self.log_prefix = str(log_prefix or "[CSV-SEG]")
+
+        os.makedirs(self.segments_dir, exist_ok=True)
+
+        self._lock = threading.Lock()
+        self._disabled = False
+
+        self._seg_index = 0
+        self._seg_start_mono = time.monotonic()
+        self._seg_start_wall = time.time()
+        self._seg_had_detection = False
+
+        self._rep = SummaryReport(num_cams=self.num_cams, gap_seconds=self.gap_seconds, time_format=self.time_format)
+
+    def _make_segment_path(self, seg_start_wall: float, seg_index: int) -> str:
+        try:
+            ts_tag = datetime.fromtimestamp(float(seg_start_wall)).strftime("%Y%m%d_%H%M%S")
+        except Exception:
+            ts_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return os.path.join(self.segments_dir, f"{self.segment_prefix}_{ts_tag}_p{int(seg_index):04d}.csv")
+
+    def _finalize_current_locked(self) -> None:
+        if self._rep is None:
+            return
+        if self.write_if_any_detection and (not bool(self._seg_had_detection)):
+            # Nothing detected in this segment -> skip file
+            return
+
+        out_path = self._make_segment_path(self._seg_start_wall, self._seg_index)
+        try:
+            self._rep.write_csv(out_path)
+            print(f"{self.log_prefix} segment written: {out_path}")
+        except Exception as e:
+            print(f"{self.log_prefix} segment write failed: {e}")
+
+    def _rotate_if_needed_locked(self, now_mono: float) -> None:
+        if self.segment_seconds <= 0:
+            return
+        if (float(now_mono) - float(self._seg_start_mono)) < float(self.segment_seconds):
+            return
+
+        # finalize old
+        self._finalize_current_locked()
+
+        # start new
+        self._seg_index += 1
+        self._seg_start_mono = float(now_mono)
+        self._seg_start_wall = time.time()
+        self._seg_had_detection = False
+        self._rep = SummaryReport(num_cams=self.num_cams, gap_seconds=self.gap_seconds, time_format=self.time_format)
+
+    def stop(self) -> None:
+        with self._lock:
+            self._disabled = True
+            try:
+                self._finalize_current_locked()
+            except Exception:
+                pass
+            try:
+                if self._rep is not None:
+                    self._rep.stop()
+            except Exception:
+                pass
+
+    def update(self, cam_id: int, present_names: List[str], ts: float, name_to_conf: Optional[Dict[str, float]] = None) -> None:
+        with self._lock:
+            if self._disabled:
+                return
+            self._rotate_if_needed_locked(time.monotonic())
+            if present_names:
+                self._seg_had_detection = True
+            if self._rep is not None:
+                self._rep.update(cam_id=cam_id, present_names=present_names, ts=ts, name_to_conf=name_to_conf)
+
+    def write_csv_live(self, path: str) -> None:
+        """
+        Live writer tick.
+
+        Behavior (important):
+          - If *segmented mode* is enabled, we normally want **one CSV per segment** (like video).
+          - Therefore, when `path` is empty, we write into the CURRENT segment file path
+            (prefix + segment start time + part index).
+          - To avoid creating empty CSVs, if `write_if_any_detection=True` we skip writing
+            until at least one detection happened in the current segment.
+
+        If a non-empty `path` is provided, we treat it as an explicit target (e.g. a manual
+        snapshot request), but we still honor the skip-empty policy.
+        """
+        with self._lock:
+            if self._disabled:
+                return
+
+            self._rotate_if_needed_locked(time.monotonic())
+
+            # Don't create/update a CSV for segments with zero detections (unless user explicitly
+            # enabled writing empty segments).
+            if self.write_if_any_detection and (not bool(self._seg_had_detection)):
+                return
+
+            out_path = str(path or "").strip()
+            if not out_path:
+                out_path = self._make_segment_path(self._seg_start_wall, self._seg_index)
+
+            if self._rep is not None:
+                self._rep.write_csv_live(out_path)
+
+    def write_csv(self, path: str) -> None:
+        """
+        Compatibility: writes CURRENT segment final snapshot to the given path.
+        Also finalizes the current segment into the segments folder (if detection happened).
+        """
+        with self._lock:
+            if self._disabled:
+                return
+            # Write current segment snapshot to requested path
+            try:
+                if self._rep is not None:
+                    self._rep.write_csv(path)
+            except Exception:
+                pass
+            # Also finalize in segments folder (if any detection)
+            try:
+                self._finalize_current_locked()
+            except Exception:
+                pass
 
 
 # ----------------------------
@@ -2751,12 +2915,35 @@ def parse_args(argv: Optional[List[str]] = None):
     # Output & view
     ap.add_argument("--show", action="store_true")
 
-    # Save summary CSV
+    # Save summary CSV (LIVE + segmented hourly)
     ap.add_argument("--save-csv", action="store_true", help="Save SUMMARY CSV report.")
     ap.add_argument("--csv", default="detections_summary.csv")
     ap.add_argument("--report-gap-seconds", type=float, default=2.0)
     ap.add_argument("--report-time-format", default="%H:%M:%S")
     ap.add_argument("--csv-live-interval", type=float, default=1.0)
+
+    # ✅ NEW: hourly/segmented CSV saving (like video segments)
+    ap.add_argument(
+        "--csv-segment-seconds",
+        type=float,
+        default=0.0,
+        help="Write one CSV per segment (seconds). 0=off. If 0, we will reuse --video-segment-seconds (if >0).",
+    )
+    ap.add_argument(
+        "--csv-segments-dir",
+        default="",
+        help="Folder for per-segment CSV files (default: csv_output/run_TIMESTAMP).",
+    )
+    ap.add_argument(
+        "--csv-segment-prefix",
+        default="summary",
+        help="Filename prefix for per-segment CSVs (default: summary).",
+    )
+    ap.add_argument(
+        "--csv-segment-write-empty",
+        action="store_true",
+        help="If set, write segment CSV even if no detections occurred in that segment (default: skip empty segments).",
+    )
 
     ap.add_argument("--overlay-fps", action="store_true", help="Draw FPS/lag/queue stats on each stream.")
 
@@ -2781,7 +2968,6 @@ def parse_args(argv: Optional[List[str]] = None):
     ap.add_argument("--video-segment-seconds", type=float, default=3600.0)
 
     return ap.parse_args(argv)
-
 
 
 # ----------------------------
@@ -3345,7 +3531,7 @@ def processor_thread(
     reid_extractor,
     face_app,
     global_owner: Optional[GlobalNameOwner],
-    report: Optional[SummaryReport],
+    report,
     embed_updater: Optional[EmbeddingDBUpdater],
     debug: bool = False,
 ):
@@ -3494,7 +3680,7 @@ def _open_writer_with_fallback(path: str, fps: float, size_wh: Tuple[int, int], 
             fourcc = cv2.VideoWriter_fourcc(*c)
             vw = cv2.VideoWriter(path, fourcc, fps, (w, h))
             if vw is not None and vw.isOpened():
-                print(f"[VIDEO] Writer opened: codec={c} fps={fps} size={w}x{h}")
+                print(f"[VIDEO] Writer opened: codec={c} fps={fps} size={w}x{h} path={path}")
                 return vw
             try:
                 if vw is not None:
@@ -3575,15 +3761,33 @@ class SegmentedVideoWriter:
         self._size_wh = None
         self._seg_start_mono = 0.0
 
+    def _try_open_path(self, path: str, frame_wh: Tuple[int, int]) -> Optional[cv2.VideoWriter]:
+        return _open_writer_with_fallback(path, fps=self.fps, size_wh=frame_wh, preferred_fourcc=self.fourcc)
+
     def _open_new(self, frame_wh: Tuple[int, int]):
         self._close_current()
         self._size_wh = frame_wh
         self._seg_start_mono = time.monotonic()
         ts_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
         path = os.path.join(self.run_dir, f"{self.basename}_{ts_tag}_p{self._seg_index:04d}{self.ext}")
-        vw = _open_writer_with_fallback(path, fps=self.fps, size_wh=frame_wh, preferred_fourcc=self.fourcc)
+
+        vw = self._try_open_path(path, frame_wh=frame_wh)
+
+        # Extra fallback: if .mp4 can't open on the system, try .avi automatically.
+        if vw is None:
+            try:
+                p = Path(path)
+                avi_path = str(p.with_suffix(".avi"))
+            except Exception:
+                avi_path = path + ".avi"
+            vw = self._try_open_path(avi_path, frame_wh=frame_wh)
+            if vw is not None:
+                path = avi_path
+                print(f"[VIDEO] Falling back to AVI container: {path}")
+
         if vw is None:
             return
+
         self._vw = vw
         self._current_path = path
         self._seg_index += 1
@@ -3734,7 +3938,7 @@ def main():
         print("[WARN] --use-deepsort requested but deep-sort-realtime not installed.")
 
     # Summary report (CSV)
-    report: Optional[SummaryReport] = None
+    report = None  # SummaryReport or SegmentedSummaryReport
     csv_stop_evt: Optional[threading.Event] = None
     csv_thread: Optional[threading.Thread] = None
 
@@ -3743,14 +3947,7 @@ def main():
         os.makedirs(out_dir, exist_ok=True)
         ts_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        report = SummaryReport(
-            num_cams=len(args.src),
-            gap_seconds=float(args.report_gap_seconds),
-            time_format=args.report_time_format,
-        )
-
-        # Respect user-provided --csv path.
-        # If user left it at the default, write into csv_output/ with a timestamp.
+        # Live CSV path (args.csv)
         csv_arg = str(getattr(args, "csv", "") or "").strip()
         if (not csv_arg) or (csv_arg == "detections_summary.csv"):
             args.csv = os.path.join(out_dir, f"output_csv_new{ts_tag}.csv")
@@ -3761,7 +3958,56 @@ def main():
             except Exception:
                 pass
 
-        print(f"[CSV] Live summary will be written to: {args.csv}")
+        # Segment seconds for CSV:
+        # If user didn't set --csv-segment-seconds, reuse --video-segment-seconds to match hourly video segments.
+        seg_s = float(getattr(args, "csv_segment_seconds", 0.0) or 0.0)
+        if seg_s <= 0:
+            seg_s = float(getattr(args, "video_segment_seconds", 0.0) or 0.0)
+
+        # Where to store segmented CSVs:
+        #   - If user passed --csv-segments-dir, use it.
+        #   - Otherwise, write segment CSV files into the SAME folder as --csv (more intuitive),
+        #     so you will see a *new* CSV file appear each segment (like video segments).
+        seg_dir = str(getattr(args, "csv_segments_dir", "") or "").strip()
+        if not seg_dir:
+            try:
+                seg_dir = os.path.dirname(str(args.csv)) or out_dir
+            except Exception:
+                seg_dir = out_dir
+        os.makedirs(seg_dir, exist_ok=True)
+
+        # Segment prefix:
+        #   - If user did NOT override --csv-segment-prefix (default="summary"), reuse the stem
+        #     of --csv (e.g. --csv output_summary.csv -> prefix "output_summary").
+        seg_prefix = str(getattr(args, "csv_segment_prefix", "summary") or "summary").strip() or "summary"
+        if seg_prefix == "summary":
+            try:
+                seg_prefix = Path(str(args.csv)).stem or seg_prefix
+            except Exception:
+                pass
+
+        if seg_s > 0:
+            report = SegmentedSummaryReport(
+                num_cams=len(args.src),
+                gap_seconds=float(args.report_gap_seconds),
+                time_format=str(args.report_time_format),
+                segment_seconds=float(seg_s),
+                segments_dir=seg_dir,
+                segment_prefix=str(seg_prefix),
+                write_if_any_detection=(not bool(getattr(args, "csv_segment_write_empty", False))),
+            )
+            print(
+                f"[CSV] Segmented CSVs: every {seg_s:.0f}s into folder: {seg_dir} "
+                f"(prefix={seg_prefix}, skip_empty={not bool(getattr(args,'csv_segment_write_empty', False))})"
+            )
+        else:
+            report = SummaryReport(
+                num_cams=len(args.src),
+                gap_seconds=float(args.report_gap_seconds),
+                time_format=str(args.report_time_format),
+            )
+            print(f"[CSV] Live summary will be written to: {args.csv}")
+
         interval = float(args.csv_live_interval)
         if interval > 0:
             csv_stop_evt = threading.Event()
@@ -4023,11 +4269,24 @@ def main():
             pass
 
         if report is not None:
-            report.stop()
+            try:
+                report.stop()
+            except Exception:
+                pass
             try:
                 if args.save_csv:
-                    report.write_csv(args.csv)
-                    print(f"[CSV] Final summary written to {args.csv}")
+                    # In segmented mode, we intentionally avoid overwriting a single fixed CSV path.
+                    # `stop()` already finalizes the current segment into the segments folder (only
+                    # if there were detections).
+                    if report.__class__.__name__ == "SegmentedSummaryReport":
+                        try:
+                            seg_dir = str(getattr(report, "segments_dir", "") or "")
+                            print(f"[CSV] Segmented CSV mode: per-segment CSVs are in: {seg_dir}")
+                        except Exception:
+                            print("[CSV] Segmented CSV mode: per-segment CSVs were finalized.")
+                    else:
+                        report.write_csv(args.csv)
+                        print(f"[CSV] Final summary written to {args.csv}")
             except Exception as e:
                 print("[CSV] Final write failed:", e)
 
@@ -4073,7 +4332,7 @@ def processor_thread_with_stop(
     reid_extractor,
     face_app,
     global_owner: Optional[GlobalNameOwner],
-    report: Optional[SummaryReport],
+    report,
     embed_updater: Optional[EmbeddingDBUpdater],
     stop_evt: threading.Event,
     debug: bool = False,
@@ -4199,12 +4458,90 @@ def processor_thread_with_stop(
             stop_evt.wait(0.001)
 
 
+def _service_video_writer_loop(
+    stop_evt: threading.Event,
+    streams: List[Dict[str, Any]],
+    buffers_by_cam: Dict[int, RenderedFrame],
+    args: argparse.Namespace,
+    seg_writer: SegmentedVideoWriter,
+) -> None:
+    """
+    Service-mode grid video writer loop:
+    - polls latest frames from each camera buffer
+    - builds a grid view
+    - writes to SegmentedVideoWriter
+    """
+    # Fixed output canvas size (headless-safe default).
+    screen_w, screen_h = _get_screen_resolution(default=(1920, 1080))
+
+    last_good: Dict[int, np.ndarray] = {}
+    target_fps = float(max(1.0, float(getattr(args, "video_fps", 20.0) or 20.0)))
+    sleep_s = 1.0 / target_fps
+
+    # Keep a stable order (same as streams list).
+    cam_order = [int(s.get("camera_db_id", -1)) for s in streams]
+
+    last_t = time.time()
+    fps_ema = 0.0
+    alpha = 0.10
+
+    while not stop_evt.is_set():
+        frames: List[np.ndarray] = []
+        any_frame = False
+
+        for cam_id in cam_order:
+            buf = buffers_by_cam.get(int(cam_id))
+            frm = None
+            if buf is not None:
+                frm, _ts, _meta = buf.get()
+            if frm is not None:
+                any_frame = True
+                last_good[int(cam_id)] = frm
+                frames.append(frm)
+            else:
+                frames.append(last_good.get(int(cam_id), np.zeros((720, 1280, 3), dtype=np.uint8)))
+
+        if any_frame and frames:
+            vis = make_grid_view(
+                frames,
+                screen_w=int(screen_w),
+                screen_h=int(screen_h),
+                mode=str(getattr(args, "grid_mode", "cover")),
+                grid_rows=int(getattr(args, "grid_rows", 0) or 0),
+                grid_cols=int(getattr(args, "grid_cols", 0) or 0),
+            )
+
+            now = time.time()
+            dt = max(1e-6, now - last_t)
+            disp_fps = 1.0 / dt
+            fps_ema = (1 - alpha) * fps_ema + alpha * disp_fps
+            last_t = now
+
+            cv2.putText(
+                vis,
+                f"DISPLAY FPS {fps_ema:.1f} | cams {len(frames)}",
+                (10, 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (255, 255, 255),
+                2,
+            )
+
+            seg_writer.write(vis)
+
+        stop_evt.wait(sleep_s)
+
+
 class TrackingRunner:
     """
     FastAPI/service runner that starts the SAME v2 pipeline, but without any GUI loop.
 
     - Buffers are addressed by DB camera_id (the values you pass via --camera-ids).
     - MJPEG endpoints can call get_camera_buffer(camera_id).
+
+    ✅ Updated:
+      - Supports segmented CSV saving (hourly) via SegmentedSummaryReport.
+      - Supports segmented GRID video saving even in service mode (no GUI loop).
     """
 
     def __init__(self, args: argparse.Namespace):
@@ -4217,7 +4554,7 @@ class TrackingRunner:
 
         self._gallery_mgr: Optional[GalleryManager] = None
         self._global_owner: Optional[GlobalNameOwner] = None
-        self._report: Optional[SummaryReport] = None
+        self._report = None  # SummaryReport or SegmentedSummaryReport
         self._csv_stop_evt: Optional[threading.Event] = None
         self._csv_thread: Optional[threading.Thread] = None
         self._embed_updater: Optional[EmbeddingDBUpdater] = None
@@ -4225,6 +4562,10 @@ class TrackingRunner:
         self._yolo = None
         self._reid_extractor = None
         self._face_app = None
+
+        # ✅ Service-mode video saving
+        self._seg_writer: Optional[SegmentedVideoWriter] = None
+        self._video_thread: Optional[threading.Thread] = None
 
         self._started = False
 
@@ -4324,7 +4665,7 @@ class TrackingRunner:
             ort_log=getattr(args, "ort_log", False),
         )
 
-        # Summary report (CSV live writer) - same as v2 main
+        # Summary report (CSV live writer) - updated with segmented CSV support
         self._report = None
         self._csv_stop_evt = None
         self._csv_thread = None
@@ -4333,12 +4674,7 @@ class TrackingRunner:
             os.makedirs(out_dir, exist_ok=True)
             ts_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-            self._report = SummaryReport(
-                num_cams=len(args.src),
-                gap_seconds=float(getattr(args, "report_gap_seconds", 2.0)),
-                time_format=str(getattr(args, "report_time_format", "%H:%M:%S")),
-            )
-
+            # Determine live CSV path
             csv_arg = str(getattr(args, "csv", "") or "").strip()
             if (not csv_arg) or (csv_arg == "detections_summary.csv"):
                 args.csv = os.path.join(out_dir, f"output_csv_new{ts_tag}.csv")
@@ -4348,6 +4684,47 @@ class TrackingRunner:
                     os.makedirs(os.path.dirname(args.csv) or ".", exist_ok=True)
                 except Exception:
                     pass
+
+            # Determine CSV segment seconds (reuse video segment seconds if csv segment seconds not set)
+            seg_s = float(getattr(args, "csv_segment_seconds", 0.0) or 0.0)
+            if seg_s <= 0:
+                seg_s = float(getattr(args, "video_segment_seconds", 0.0) or 0.0)
+
+            # Where to store segmented CSVs:
+            #   - If user passed --csv-segments-dir, use it.
+            #   - Otherwise, write into the SAME folder as --csv (so segment files are easy to find).
+            seg_dir = str(getattr(args, "csv_segments_dir", "") or "").strip()
+            if not seg_dir:
+                try:
+                    seg_dir = os.path.dirname(str(args.csv)) or out_dir
+                except Exception:
+                    seg_dir = out_dir
+            os.makedirs(seg_dir, exist_ok=True)
+
+            # Segment prefix (default derives from --csv).
+            seg_prefix = str(getattr(args, "csv_segment_prefix", "summary") or "summary").strip() or "summary"
+            if seg_prefix == "summary":
+                try:
+                    seg_prefix = Path(str(args.csv)).stem or seg_prefix
+                except Exception:
+                    pass
+
+            if seg_s > 0:
+                self._report = SegmentedSummaryReport(
+                    num_cams=len(args.src),
+                    gap_seconds=float(getattr(args, "report_gap_seconds", 2.0)),
+                    time_format=str(getattr(args, "report_time_format", "%H:%M:%S")),
+                    segment_seconds=float(seg_s),
+                    segments_dir=seg_dir,
+                    segment_prefix=str(seg_prefix),
+                    write_if_any_detection=(not bool(getattr(args, "csv_segment_write_empty", False))),
+                )
+            else:
+                self._report = SummaryReport(
+                    num_cams=len(args.src),
+                    gap_seconds=float(getattr(args, "report_gap_seconds", 2.0)),
+                    time_format=str(getattr(args, "report_time_format", "%H:%M:%S")),
+                )
 
             interval = float(getattr(args, "csv_live_interval", 1.0) or 0.0)
             if interval > 0:
@@ -4444,7 +4821,7 @@ class TrackingRunner:
         if not any(s["vs"].is_opened() for s in self._streams):
             raise RuntimeError("No sources opened. Check --src URLs and codecs.")
 
-        # threads
+        # Start processing threads
         for s in self._streams:
             t = threading.Thread(
                 target=processor_thread_with_stop,
@@ -4471,6 +4848,34 @@ class TrackingRunner:
             t.start()
             self._threads.append(t)
 
+        # ✅ Service-mode video saving thread (grid video) if enabled
+        if bool(getattr(args, "save_video", True)):
+            out_dir = str(getattr(args, "video_dir", "saved_videos") or "saved_videos")
+            os.makedirs(out_dir, exist_ok=True)
+
+            self._seg_writer = SegmentedVideoWriter(
+                out_dir=out_dir,
+                basename=str(getattr(args, "video_prefix", "saved_video") or "saved_video"),
+                ext=_norm_ext(getattr(args, "video_ext", ".mp4")),
+                fps=float(getattr(args, "video_fps", 20.0) or 20.0),
+                fourcc=str(getattr(args, "video_fourcc", "mp4v") or "mp4v"),
+                segment_seconds=int(float(getattr(args, "video_segment_seconds", 3600.0) or 0.0)),
+                save_height=int(getattr(args, "video_save_height", 480) or 0),
+            )
+
+            print(f"[INIT] (service) Saving annotated GRID videos to folder: {self._seg_writer.run_dir}")
+            if self._seg_writer.segment_seconds > 0:
+                print(f"[INIT] (service) Video segmentation: ON ({self._seg_writer.segment_seconds:.0f}s per file)")
+            else:
+                print("[INIT] (service) Video segmentation: OFF (single file)")
+
+            self._video_thread = threading.Thread(
+                target=_service_video_writer_loop,
+                args=(self._stop_evt, list(self._streams), dict(self._render_by_cam), args, self._seg_writer),
+                daemon=True,
+            )
+            self._video_thread.start()
+
         self._started = True
 
     def stop(self) -> None:
@@ -4494,12 +4899,26 @@ class TrackingRunner:
         except Exception:
             pass
 
+        # close service video writer
+        try:
+            if self._video_thread is not None:
+                self._video_thread.join(timeout=2.0)
+        except Exception:
+            pass
+        try:
+            if self._seg_writer is not None:
+                self._seg_writer.close()
+        except Exception:
+            pass
+
         # final report write (optional)
         if self._report is not None:
             try:
                 self._report.stop()
                 if bool(getattr(self.args, "save_csv", False)) and str(getattr(self.args, "csv", "") or "").strip():
-                    self._report.write_csv(self.args.csv)
+                    # In segmented mode, do not overwrite a single fixed CSV path on stop().
+                    if self._report.__class__.__name__ != "SegmentedSummaryReport":
+                        self._report.write_csv(self.args.csv)
             except Exception:
                 pass
 
@@ -4548,6 +4967,8 @@ class TrackingRunner:
             "save_csv": bool(getattr(self.args, "save_csv", False)),
             "csv_path": str(getattr(self.args, "csv", "") or ""),
             "update_db_embeddings": bool(getattr(self.args, "update_db_embeddings", False)),
+            "save_video": bool(getattr(self.args, "save_video", True)),
+            "video_dir": str(getattr(self._seg_writer, "run_dir", "") or ""),
         }
 
     def write_report_snapshot(self, path: str | None = None) -> str:
@@ -4561,6 +4982,7 @@ class TrackingRunner:
         except Exception:
             pass
         return out_path
+
 
 if __name__ == "__main__":
     try:

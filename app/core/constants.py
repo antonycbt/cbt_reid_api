@@ -2,7 +2,7 @@ from pathlib import Path
 import os
  
 USER_ROLES = { 
-    1: "Admin", 
+    1: "View Admin", 
     2: "Primary Admin", 
     3: "Super Admin", 
 }
