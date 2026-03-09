@@ -42,3 +42,9 @@ crops/
 
 # CSV outputs
 csv_output/
+csv_output1/
+
+# Saved Videos 
+
+saved_videos/
+saved_videos1/
