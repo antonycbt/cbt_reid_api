@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Optional, List
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
+from sqlalchemy import exists, and_
 
 from app.schemas.site_hierarchy import (
     SiteHierarchyCreate,
@@ -11,138 +12,29 @@ from app.schemas.site_hierarchy import (
 from app.schemas.common import MessageResponse
 from app.db.session import get_db
 from app.db.models.site_hierarchy import SiteHierarchy
+from app.db.models.site_location import SiteLocation
+from app.db.models import Camera
 from app.services.site_hierarchy_service import SiteHierarchyService
-from sqlalchemy import exists, and_
-
-router = APIRouter()
-
-# ---------------- TREE HELPER ----------------
-from typing import List, Dict, Set
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session, selectinload
-from app.db.session import get_db
-from app.db.models import SiteHierarchy, SiteLocation, Camera
-from app.schemas.site_hierarchy import SiteHierarchyNode
+from app.repositories.site_hierarchy_repo import SiteHierarchyRepository
 from app.core.dependencies import get_current_user
 from app.db.models.user import User
 
 router = APIRouter()
 
-# ---------------- TREE HELPER ----------------
-def build_tree_with_lock(
-    nodes: List[SiteHierarchy],
-    direct_locations_map: Dict[int, List[int]],
-    used_location_ids: Set[int],
-    location_meta_map: Dict[int, Dict],   # ✅ NEW
-) -> List[SiteHierarchyNode]:
 
-    node_map: Dict[int, SiteHierarchy] = {node.id: node for node in nodes}
-    roots: List[SiteHierarchy] = []
-
-    # reset children
-    for node in nodes:
-        node.children = []
-
-    # assign children
-    for node in nodes:
-        if node.parent_site_hierarchy_id:
-            parent = node_map.get(node.parent_site_hierarchy_id)
-            if parent:
-                parent.children.append(node)
-        else:
-            roots.append(node)
-
-    # lock only direct leaf nodes (UNCHANGED)
-    for node in nodes:
-        direct_loc_ids = direct_locations_map.get(node.id, [])
-        node._is_locked = any(loc_id in used_location_ids for loc_id in direct_loc_ids)
-
-    # convert to Pydantic
-    def orm_to_pydantic(node: SiteHierarchy) -> SiteHierarchyNode:
-        pyd = SiteHierarchyNode.from_orm(node)
-
-        # children
-        pyd.children = [
-            orm_to_pydantic(child)
-            for child in getattr(node, "children", [])
-        ]
-
-        # existing lock (UNCHANGED)
-        pyd.is_locked = bool(getattr(node, "_is_locked", False))
-
-        # NEW: fetch from site_location (ONLY for leaf nodes)
-        direct_loc_ids = direct_locations_map.get(node.id, [])
-        is_leaf = len(direct_loc_ids) > 0
-
-        if is_leaf:
-            loc_meta = location_meta_map.get(node.id)
-            if loc_meta:
-                pyd.is_public = loc_meta.get("is_public", False)
-                pyd.is_protected = loc_meta.get("is_protected", False)
-
-        return pyd
-
-    return [orm_to_pydantic(root) for root in roots]
-
-
-# ---------------- ROUTE ----------------
+# ── TREE ──────────────────────────────────────────────────────────────────────
 
 @router.get("/tree", response_model=List[SiteHierarchyNode])
 def get_site_hierarchy_tree(
+    search: Optional[str] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    return SiteHierarchyService.get_tree(db, search=search)
 
-    # load hierarchy
-    nodes = db.query(SiteHierarchy).options(
-        selectinload(SiteHierarchy.children)
-    ).all()
 
-    # 1) site_location mapping + meta
-    loc_rows = db.query(
-        SiteLocation.id,
-        SiteLocation.site_hierarchy_id,
-        SiteLocation.is_public,
-        SiteLocation.is_protected
-    ).all()
+# ── LIST ──────────────────────────────────────────────────────────────────────
 
-    direct_locations_map: Dict[int, List[int]] = {}
-    location_meta_map: Dict[int, Dict] = {}
-
-    for loc_id, hierarchy_id, is_public, is_protected in loc_rows:
-        if hierarchy_id is None:
-            continue
-
-        # existing mapping
-        direct_locations_map.setdefault(hierarchy_id, []).append(loc_id)
-
-        # store meta (leaf data source)
-        location_meta_map[hierarchy_id] = {
-            "is_public": is_public,
-            "is_protected": is_protected
-        }
-
-    # 2) used locations (UNCHANGED)
-    used_rows = (
-        db.query(Camera.site_location_id)
-        .filter(Camera.site_location_id.isnot(None))
-        .distinct()
-        .all()
-    )
-
-    used_location_ids: Set[int] = {
-        r[0] for r in used_rows if r[0] is not None
-    }
-
-    # 3) build tree (pass new map)
-    return build_tree_with_lock(
-        nodes,
-        direct_locations_map,
-        used_location_ids,
-        location_meta_map   
-    ) 
-
-# LIST (pagination + search)
 @router.get("", response_model=MessageResponse[List[SiteHierarchyOut]])
 def list_site_hierarchies(
     search: Optional[str] = None,
@@ -157,15 +49,12 @@ def list_site_hierarchies(
             SiteLocation.site_hierarchy_id == SiteHierarchy.id,
         )
     )
-
     query = db.query(SiteHierarchy).filter(~used_by_camera)
-
     if search:
         query = query.filter(SiteHierarchy.name.ilike(f"%{search}%"))
 
     total = query.count()
     sites = query.offset(page * page_size).limit(page_size).all()
-
     for site in sites:
         site.children = []
 
@@ -174,6 +63,7 @@ def list_site_hierarchies(
         "data": [SiteHierarchyOut.from_orm(s) for s in sites],
         "total": total,
     }
+
 
 @router.get("/active_hierarchy", response_model=MessageResponse[List[SiteHierarchyOut]])
 def list_active_site_hierarchies(
@@ -186,17 +76,14 @@ def list_active_site_hierarchies(
             SiteLocation.site_hierarchy_id == SiteHierarchy.id,
         )
     )
-
     sites = (
         db.query(SiteHierarchy)
-        .filter(
-            ~used_by_camera,
-            SiteHierarchy.is_active == True,
-        )
+        .filter(~used_by_camera, SiteHierarchy.is_active == True)
         .all()
     )
-
-    all_sites_map: dict[int, SiteHierarchy] = {s.id: s for s in db.query(SiteHierarchy).all()}
+    all_sites_map: dict[int, SiteHierarchy] = {
+        s.id: s for s in db.query(SiteHierarchy).all()
+    }
 
     def all_ancestors_active(site: SiteHierarchy) -> bool:
         current = site
@@ -208,7 +95,6 @@ def list_active_site_hierarchies(
         return True
 
     valid_sites = [s for s in sites if all_ancestors_active(s)]
-
     for site in valid_sites:
         site.children = []
 
@@ -218,7 +104,9 @@ def list_active_site_hierarchies(
         "total": len(valid_sites),
     }
 
-# CREATE
+
+# ── CREATE ────────────────────────────────────────────────────────────────────
+
 @router.post("", response_model=MessageResponse[SiteHierarchyOut])
 def create_site_hierarchy(
     payload: SiteHierarchyCreate,
@@ -233,18 +121,23 @@ def create_site_hierarchy(
     }
 
 
+# ── READ (single) ─────────────────────────────────────────────────────────────
 
-# GET BY ID
 @router.get("/{site_hierarchy_id}", response_model=MessageResponse[SiteHierarchyOut])
 def get_site_hierarchy(
     site_hierarchy_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    site = db.query(SiteHierarchy).options(selectinload(SiteHierarchy.children)).filter(SiteHierarchy.id == site_hierarchy_id).first()
+    from sqlalchemy.orm import selectinload
+    site = (
+        db.query(SiteHierarchy)
+        .options(selectinload(SiteHierarchy.children))
+        .filter(SiteHierarchy.id == site_hierarchy_id)
+        .first()
+    )
     if not site:
         raise HTTPException(status_code=404, detail="Site hierarchy not found")
-    
     site.children = []
     return {
         "message": "Site hierarchy fetched successfully",
@@ -252,7 +145,8 @@ def get_site_hierarchy(
     }
 
 
-# UPDATE
+# ── UPDATE ────────────────────────────────────────────────────────────────────
+
 @router.put("/{site_hierarchy_id}", response_model=MessageResponse[SiteHierarchyOut])
 def update_site_hierarchy(
     site_hierarchy_id: int,
@@ -270,38 +164,19 @@ def update_site_hierarchy(
     }
 
 
-# DELETE
+# ── DELETE ────────────────────────────────────────────────────────────────────
+
 @router.delete("/{site_hierarchy_id}", response_model=MessageResponse[None])
 def delete_site_hierarchy(
     site_hierarchy_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    from app.db.models.camera import Camera  # avoid circular import
+    SiteHierarchyService.delete_site_hierarchy(db, site_hierarchy_id, actor_id=current_user.id)
+    return {"message": "Site hierarchy and all its children deleted successfully"}
 
-    # camera in-use check stays in route since it's a guard, not business logic
-    locations = db.query(SiteLocation).filter(
-        SiteLocation.site_hierarchy_id == site_hierarchy_id
-    ).all()
-    location_ids = [l.id for l in locations]
 
-    in_use = db.query(Camera.id).filter(
-        Camera.site_location_id.in_(location_ids)
-    ).first()
-
-    if in_use:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot delete. Site hierarchy is used by a camera."
-        )
-
-    success = SiteHierarchyService.delete_site_hierarchy(
-        db, site_hierarchy_id, actor_id=current_user.id
-    )
-    if not success:
-        raise HTTPException(status_code=404, detail="Site hierarchy not found")
-
-    return {"message": "Site hierarchy deleted successfully"}
+# ── FULL TREE (read-only deep view) ──────────────────────────────────────────
 
 @router.get("/full_tree/{site_hierarchy_id}", response_model=MessageResponse[List[dict]])
 def get_full_hierarchy_tree(
@@ -311,5 +186,5 @@ def get_full_hierarchy_tree(
     tree = SiteHierarchyService.get_full_hierarchy_tree(site_hierarchy_id)
     return {
         "message": "Site hierarchy + locations tree fetched successfully",
-        "data": tree
+        "data": tree,
     }

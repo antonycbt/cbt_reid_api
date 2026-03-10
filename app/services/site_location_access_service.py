@@ -1,6 +1,6 @@
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text,func
 from app.db.session import SessionLocal
 from app.repositories.site_location_access_repo import SiteLocationAccessRepository
 from app.schemas.site_location_access import SiteLocationAccessCreate, SiteLocationAccessBulkCreate
@@ -185,6 +185,7 @@ class SiteLocationAccessService:
     def list_unlinked_site_locations_by_access_group(
         db: Session,
         access_group_id: Optional[int] = None,
+        search: Optional[str] = None,                     # ← add
     ) -> List[SiteLocation]:
         fully_active_hierarchy_ids = SiteHierarchyRepository.get_fully_active_hierarchy_ids(db)
         if not fully_active_hierarchy_ids:
@@ -205,6 +206,8 @@ class SiteLocationAccessService:
                 .subquery()
             )
             query = query.filter(~SiteLocation.id.in_(linked_ids))
+        if search:
+            query = query.filter(func.lower(SiteHierarchy.name).contains(search.lower()))  # ← add
         return query.all()
 
     @staticmethod

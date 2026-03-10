@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import select, insert, delete, func
+from sqlalchemy import select, insert, delete, or_
 from app.db.models.associations import member_access
 from sqlalchemy.orm import joinedload
 from app.db.models import Member, AccessGroup
@@ -76,7 +76,10 @@ class MemberAccessRepository:
 
         if search:
             query = query.filter(
-                (Member.first_name + " " + Member.last_name).ilike(f"%{search}%")
+                or_(
+                    (Member.first_name + " " + Member.last_name).ilike(f"%{search}%"),
+                    Member.access_groups.any(AccessGroup.name.ilike(f"%{search}%"))
+                )
             )
 
         total = query.count()
