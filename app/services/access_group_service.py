@@ -1,7 +1,7 @@
 from sqlalchemy.exc import IntegrityError
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text,func
 
 from app.db.session import SessionLocal
 from app.repositories.access_group_repo import AccessGroupRepository
@@ -45,7 +45,6 @@ def _resolve_access_group_changes(
         if field == "parent_access_group_id":
             old_name = _get_access_group_name(db, old) if old is not None else None
             new_name = _get_access_group_name(db, new) if new is not None else None
-            # only include if at least one side resolved
             if old_name is not None or new_name is not None:
                 resolved["parent_access_group"] = [old_name, new_name]
         else:
@@ -167,24 +166,39 @@ class AccessGroupService:
             db.close()
 
     @staticmethod
-    def list_access_groups_active_hierarchy():
+    def list_access_groups_active_hierarchy(search: str | None = None):
         db = SessionLocal()
         try:
-            return AccessGroupRepository.list_active_hierarchy(db)
+            return AccessGroupRepository.list_active_hierarchy(db, search=search)
         finally:
             db.close()
 
     @staticmethod
     def delete_access_group(access_group_id: int, actor_id: int) -> bool:
+        """
+        Cascade-delete an access group node and ALL its descendants (leaf-first).
+        Logs activity only for the root node being deleted.
+        """
         db = SessionLocal()
         try:
-            group = AccessGroupRepository.get_by_id(db, access_group_id)
-            if not group:
+            # ── 1. Build children map from all nodes ─────────────────────────
+            raw_nodes = AccessGroupRepository.fetch_all_nodes_raw(db)
+            children_map = AccessGroupRepository.build_children_map(raw_nodes)
+
+            if access_group_id not in children_map:
                 return False
 
-            before = snapshot(group)
-            AccessGroupRepository.delete(db, group)
+            # ── 2. Snapshot root node for activity log before deletion ────────
+            root_node = AccessGroupRepository.get_by_id(db, access_group_id)
+            if not root_node:
+                return False
 
+            before = snapshot(root_node)
+
+            # ── 3. Delete leaf-first (children before parents) ────────────────
+            AccessGroupRepository.delete_subtree(db, access_group_id, children_map)
+
+            # ── 4. Activity log for root only ─────────────────────────────────
             detail = ActivityDetail(
                 action="delete",
                 entity=ACCESS_GROUP_ENTITY,
@@ -218,6 +232,7 @@ class AccessGroupService:
     def list_unlinked_members_by_access_groups(
         db: Session,
         access_group_id: int | None = None,
+        search: str | None = None,                    # ← add
     ):
         query = db.query(Member).order_by(Member.id)
         if access_group_id:
@@ -229,5 +244,10 @@ class AccessGroupService:
             query = query.filter(
                 ~Member.id.in_(linked_ids),
                 Member.is_active.is_(True),
+            )
+        if search:
+            search_lower = f"%{search.lower()}%"
+            query = query.filter(
+                func.lower(Member.first_name + " " + Member.last_name).like(search_lower)
             )
         return query.all()

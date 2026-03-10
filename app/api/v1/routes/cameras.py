@@ -169,7 +169,7 @@ def get_camera(
 
 
 # LIST cameras
-@router.get("", response_model=MessageResponse[list])
+@router.get("", response_model=None)
 def list_cameras(
     search: Optional[str] = None,
     page: int = Query(0, ge=0),
@@ -178,7 +178,6 @@ def list_cameras(
     current_user: User = Depends(get_current_user),
 ):
     cameras, total = CameraService.list_cameras(db, search, page, page_size)
-
     return {
         "message": "Cameras fetched successfully",
         "data": cameras,

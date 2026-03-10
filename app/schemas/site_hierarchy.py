@@ -31,6 +31,7 @@ class SiteHierarchyNode(BaseModel):
     name: str
     parent_site_hierarchy_id: Optional[int]
     is_active: bool
+    is_deletable: bool = True 
     children: List["SiteHierarchyNode"] = []
     is_locked: bool = False
     is_public: Optional[bool] = None

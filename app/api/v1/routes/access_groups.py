@@ -8,9 +8,7 @@ from app.schemas.access_group import (
     AccessGroupOut,
     AccessGroupNode
 )
-from app.schemas.member import (
-    MemberOut
-)
+from app.schemas.member import MemberOut
 from app.services.access_group_service import AccessGroupService
 from app.schemas.common import MessageResponse
 from app.db.session import get_db
@@ -23,24 +21,43 @@ router = APIRouter()
 
 # ---------- STATIC ROUTES FIRST ----------
 
-
 @router.get("/tree", response_model=List[AccessGroupNode])
 def get_access_group_tree(
+    search: Optional[str] = None,          # ← added
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
     Return nested access group tree.
-    - Fetches all access groups (flat)
-    - Builds a nested tree using parent_access_group_id
+    If search is provided, returns full trees of roots that contain matching nodes.
     """
-    # load all access groups
     all_groups: List[AccessGroup] = db.query(AccessGroup).all()
-
-    # build nested tree (plain dicts)
     tree = build_tree_from_flat(all_groups)
 
-    return tree
+    if not search:
+        return tree
+
+    # Find root trees whose subtree contains the search term
+    search_lower = search.strip().lower()
+    node_map: Dict[int, AccessGroup] = {g.id: g for g in all_groups}
+
+    def get_root_id(group: AccessGroup) -> int:
+        current = group
+        while current.parent_access_group_id is not None:
+            parent = node_map.get(current.parent_access_group_id)
+            if parent is None:
+                break
+            current = parent
+        return current.id
+
+    matched_root_ids = {
+        get_root_id(g)
+        for g in all_groups
+        if search_lower in g.name.lower()
+    }
+
+    return [node for node in tree if node["id"] in matched_root_ids]
+
 
 @router.get(
     "/list_unlinked_members_by_access_groups",
@@ -48,11 +65,12 @@ def get_access_group_tree(
 )
 def list_unlinked_members_by_access_groups(
     access_group_id: Optional[int] = Query(None),
+    search: Optional[str] = Query(None),          # ← add
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     members = AccessGroupService.list_unlinked_members_by_access_groups(
-        db, access_group_id
+        db, access_group_id, search=search          # ← pass through
     )
     return {
         "message": "Members fetched successfully",
@@ -77,18 +95,21 @@ def get_all_access_groups(
         "total": len(groups),
     }
 
+
 @router.get("/active_hierarchy", response_model=MessageResponse[List[AccessGroupOut]])
 def get_active_hierarchy_access_groups(
+    search: str | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    groups, total = AccessGroupService.list_access_groups_active_hierarchy()
+    groups, total = AccessGroupService.list_access_groups_active_hierarchy(search=search)
     return {
         "message": "Access groups fetched successfully",
         "data": groups,
         "total": total,
     }
-  
+
+
 # ---------- LIST (search + pagination) ----------
 
 @router.get("", response_model=MessageResponse[List[AccessGroupOut]])
@@ -127,7 +148,6 @@ def get_access_group(
     group = AccessGroupService.get_access_group(access_group_id)
     if not group:
         raise HTTPException(status_code=404, detail="Access group not found")
-
     return {
         "message": "Access group fetched successfully",
         "data": group,
@@ -154,16 +174,11 @@ def delete_access_group(
         raise HTTPException(status_code=404, detail="Access group not found")
     return {"message": "Access group deleted permanently"}
 
+
 def build_tree_from_flat(flat: List[AccessGroup]) -> List[Dict[str, Any]]:
-    """
-    Convert flat SQLAlchemy AccessGroup objects list into nested dict tree.
-    Returns a list of root node dicts. Each node is a plain dict suitable for
-    Pydantic serialization (matches AccessGroupNode).
-    """
     node_map: Dict[int, Dict[str, Any]] = {}
     roots: List[Dict[str, Any]] = []
 
-    # 1) create node_map entries
     for r in flat:
         node_map[r.id] = {
             "id": r.id,
@@ -173,7 +188,6 @@ def build_tree_from_flat(flat: List[AccessGroup]) -> List[Dict[str, Any]]:
             "children": [],
         }
 
-    # 2) link children to parents (or add to roots)
     for r in flat:
         node = node_map[r.id]
         parent_id = r.parent_access_group_id

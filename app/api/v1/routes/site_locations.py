@@ -23,15 +23,14 @@ router = APIRouter()
     response_model=MessageResponse[List[SiteLocationOut]],
 )
 def list_unlinked_site_locations_by_access_group(
-    access_group_id: Optional[int] = Query(None, description="Filter out linked site locations"),
+    access_group_id: Optional[int] = Query(None),
+    search: Optional[str] = Query(None),              # ← add
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Return site locations that are NOT linked to the given access_group_id.
-    IMPORTANT: must be defined before the dynamic /{site_location_id} route to avoid route collisions.
-    """
-    site_locations = SiteLocationAccessService.list_unlinked_site_locations_by_access_group(db, access_group_id)
+    site_locations = SiteLocationAccessService.list_unlinked_site_locations_by_access_group(
+        db, access_group_id, search=search             # ← pass through
+    )
     return {
         "message": "Site locations fetched successfully",
         "data": site_locations,
