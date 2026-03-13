@@ -78,13 +78,14 @@ def list_active_cameras(
 def list_site_locations(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    search: Optional[str] = Query(None),
 ):
     fully_active_hierarchy_ids = SiteHierarchyRepository.get_fully_active_hierarchy_ids(db)
 
     if not fully_active_hierarchy_ids:
         return {"message": "Site locations fetched successfully", "data": []}
 
-    locations = (
+    query = (
         db.query(SiteLocation)
         .join(SiteLocation.site_hierarchy)
         .options(joinedload(SiteLocation.site_hierarchy))
@@ -92,8 +93,14 @@ def list_site_locations(
             SiteLocation.is_active.is_(True),
             SiteHierarchy.id.in_(fully_active_hierarchy_ids),
         )
-        .all()
     )
+
+    if search:                                   # ← add this block
+        query = query.filter(
+            SiteHierarchy.name.ilike(f"%{search}%")
+        )
+
+    locations = query.all()
 
     data = [
         {

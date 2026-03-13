@@ -120,6 +120,7 @@ class SiteHierarchyTreeBuilder:
             if loc_meta:
                 pyd.is_public = loc_meta.get("is_public", False)
                 pyd.is_protected = loc_meta.get("is_protected", False)
+                pyd.is_leaf = loc_meta.get("is_leaf", False)
 
         return pyd
 

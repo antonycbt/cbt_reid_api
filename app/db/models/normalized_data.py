@@ -46,10 +46,15 @@ class NormalizedData(Base):
         nullable=False
     )
 
-    movement_ts = Column(
+    entry_ts = Column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False
+    )
+
+    exit_ts = Column(
+        DateTime(timezone=True),
+        nullable=True
     )
 
     average_match_value = Column(
@@ -62,6 +67,6 @@ class NormalizedData(Base):
     camera = relationship("Camera", backref="normalized_events")
 
     __table_args__ = (
-        Index("ix_norm_member_movement_ts", "member_id", "movement_ts"),
-        Index("ix_norm_guest_movement_ts", "guest_temp_id", "movement_ts"),
+        Index("ix_norm_member_entry_ts", "member_id", "entry_ts"),
+        Index("ix_norm_guest_entry_ts", "guest_temp_id", "entry_ts"),
     )
