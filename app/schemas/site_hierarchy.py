@@ -36,6 +36,7 @@ class SiteHierarchyNode(BaseModel):
     is_locked: bool = False
     is_public: Optional[bool] = None
     is_protected: Optional[bool] = None
+    is_leaf: bool = False
     model_config = {"from_attributes": True}
 
 SiteHierarchyNode.update_forward_refs()

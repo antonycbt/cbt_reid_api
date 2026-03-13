@@ -11,8 +11,11 @@ router = APIRouter()
 
 
 @router.get("/all", response_model=List[DepartmentOut])
-def list_all_departments(current_user: User = Depends(get_current_user)):
-    return DepartmentService.list_all_departments()
+def list_all_departments(
+    current_user: User = Depends(get_current_user),
+    name: str | None = Query(default=None),
+):
+    return DepartmentService.list_all_departments(name=name)
 
 
 @router.post("", response_model=MessageResponse[DepartmentOut])

@@ -60,10 +60,14 @@ class DepartmentRepository:
         db.flush()
 
     @staticmethod
-    def list_all_active(db: Session) -> List[Department]:
+    def list_all_active(db: Session, name: str | None = None) -> List[Department]:
         stmt = (
             select(Department)
             .where(Department.is_active.is_(True))
-            .order_by(func.lower(Department.name).asc())
         )
+
+        if name:
+            stmt = stmt.where(Department.name.ilike(f"%{name}%"))
+
+        stmt = stmt.order_by(func.lower(Department.name).asc())
         return db.execute(stmt).scalars().all()

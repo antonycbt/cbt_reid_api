@@ -160,9 +160,9 @@ class DepartmentService:
             db.close()
 
     @staticmethod
-    def list_all_departments():
+    def list_all_departments(name: str | None = None):
         db = SessionLocal()
         try:
-            return DepartmentRepository.list_all_active(db)
+            return DepartmentRepository.list_all_active(db, name=name)
         finally:
             db.close()

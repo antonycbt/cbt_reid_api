@@ -11,8 +11,6 @@ from app.db.models.site_location import SiteLocation
 
 class NormalizedReportRepository:
 
-    # ── Site locations ────────────────────────────────────────────────────────
-
     @staticmethod
     def _get_fully_active_hierarchy_ids(db: Session) -> set:
         cte = text("""
@@ -38,7 +36,6 @@ class NormalizedReportRepository:
         if not fully_active_ids:
             return []
 
-        # Join SiteLocation → SiteHierarchy, filter active + in fully_active tree
         stmt = (
             select(SiteLocation)
             .join(SiteHierarchy, SiteLocation.site_hierarchy_id == SiteHierarchy.id)
@@ -50,27 +47,13 @@ class NormalizedReportRepository:
 
         if search:
             s = search.strip().lower()
-            stmt = stmt.where(
-                func.lower(SiteHierarchy.name).like(f"%{s}%")
-            )
+            stmt = stmt.where(func.lower(SiteHierarchy.name).like(f"%{s}%"))
 
         stmt = stmt.order_by(func.lower(SiteHierarchy.name).asc())
-
-        # selectinload so site_hierarchy.name is available without lazy-load issues
         stmt = stmt.options(selectinload(SiteLocation.site_hierarchy))
 
         locations = db.execute(stmt).scalars().all()
-
-        return [
-            {
-                "id": loc.id,
-                # SiteLocation.name is a @property returning site_hierarchy.name
-                "name": loc.name,
-            }
-            for loc in locations
-        ]
-
-    # ── Active members ────────────────────────────────────────────────────────
+        return [{"id": loc.id, "name": loc.name} for loc in locations]
 
     @staticmethod
     def list_all_active(
@@ -99,8 +82,6 @@ class NormalizedReportRepository:
 
         return db.execute(stmt).scalars().all()
 
-    # ── Main report ───────────────────────────────────────────────────────────
-
     @staticmethod
     def fetch_report(
         db: Session,
@@ -124,9 +105,9 @@ class NormalizedReportRepository:
         if movement_type is not None:
             filters.append(NormalizedData.movement_type == movement_type)
         if start_ts is not None:
-            filters.append(NormalizedData.movement_ts >= start_ts)
+            filters.append(NormalizedData.entry_ts >= start_ts)          # ← updated
         if end_ts is not None:
-            filters.append(NormalizedData.movement_ts <= end_ts)
+            filters.append(NormalizedData.entry_ts <= end_ts)            # ← updated
         if min_match is not None:
             filters.append(NormalizedData.average_match_value >= min_match)
         if search:
@@ -164,7 +145,7 @@ class NormalizedReportRepository:
             query = query.where(and_(*filters))
 
         query = (
-            query.order_by(NormalizedData.movement_ts.desc())
+            query.order_by(NormalizedData.entry_ts.desc())               # ← updated
             .offset(offset)
             .limit(page_size)
         )

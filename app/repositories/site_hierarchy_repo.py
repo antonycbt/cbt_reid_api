@@ -159,28 +159,25 @@ class SiteHierarchyRepository:
 
     @staticmethod
     def fetch_direct_locations_map(db: Session) -> Tuple[Dict[int, List[int]], Dict[int, Dict]]:
-        """
-        Returns:
-          direct_locations_map: { hierarchy_id -> [location_id, ...] }
-          location_meta_map:    { hierarchy_id -> {is_public, is_protected} }
-        """
         loc_rows = db.query(
             SiteLocation.id,
             SiteLocation.site_hierarchy_id,
             SiteLocation.is_public,
             SiteLocation.is_protected,
+            SiteLocation.is_active,  # ← add this
         ).all()
 
         direct_locations_map: Dict[int, List[int]] = {}
         location_meta_map: Dict[int, Dict] = {}
 
-        for loc_id, hierarchy_id, is_public, is_protected in loc_rows:
+        for loc_id, hierarchy_id, is_public, is_protected, is_active in loc_rows:  # ← unpack
             if hierarchy_id is None:
                 continue
             direct_locations_map.setdefault(hierarchy_id, []).append(loc_id)
             location_meta_map[hierarchy_id] = {
                 "is_public": is_public,
                 "is_protected": is_protected,
+                "is_leaf": is_active,  # ← active SiteLocation = leaf node
             }
 
         return direct_locations_map, location_meta_map
@@ -306,15 +303,39 @@ class SiteHierarchyRepository:
         for child_id in children_map.get(node_id, []):
             SiteHierarchyRepository.delete_subtree(db, child_id, children_map)
 
+        # Get parent_id before deleting
+        node = db.get(SiteHierarchy, node_id)
+        parent_id = node.parent_site_hierarchy_id if node else None
+
+        # Delete SiteLocation first
         db.query(SiteLocation).filter(
             SiteLocation.site_hierarchy_id == node_id
         ).delete(synchronize_session="fetch")
 
-        node = db.get(SiteHierarchy, node_id)
+        # Delete the node
         if node:
             db.delete(node)
 
-    @staticmethod
-    def delete(db: Session, site: SiteHierarchy) -> None:
-        db.delete(site)
-        db.commit()
+        db.flush()
+
+        # After deletion, check if parent has no remaining children → restore it as leaf
+        if parent_id:
+            remaining_children = (
+                db.query(SiteHierarchy.id)
+                .filter(SiteHierarchy.parent_site_hierarchy_id == parent_id)
+                .first()
+            )
+            if not remaining_children:
+                existing_location = (
+                    db.query(SiteLocation)
+                    .filter(SiteLocation.site_hierarchy_id == parent_id)
+                    .first()
+                )
+                if not existing_location:
+                    db.add(SiteLocation(
+                        site_hierarchy_id=parent_id,
+                        is_active=True,
+                        is_public=False,
+                        is_protected=False,
+                    ))
+                    db.flush()

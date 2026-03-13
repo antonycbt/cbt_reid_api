@@ -57,16 +57,12 @@ class MemberAccessRepository:
     @staticmethod
     def list(db, search: str | None, page: int = 0, page_size: int = 10):
 
-        # Pre-fetch all access groups for ancestor traversal
-        all_access_groups = {ag.id: ag for ag in db.query(AccessGroup).all()}
-
-        def all_access_group_ancestors_active(access_group_id: int) -> bool:
-            current = all_access_groups.get(access_group_id)
-            while current and current.parent_access_group_id is not None:
-                parent = all_access_groups.get(current.parent_access_group_id)
-                if parent is None or not parent.is_active:
+        def all_access_group_ancestors_active(access_group: AccessGroup) -> bool:
+            current = access_group.parent
+            while current is not None:
+                if not current.is_active:
                     return False
-                current = parent
+                current = current.parent
             return True
 
         query = (
@@ -92,12 +88,15 @@ class MemberAccessRepository:
                 part for part in [member.first_name, member.last_name] if part
             )
 
-            full_name = " ".join(
-                part for part in [member.first_name, member.last_name] if part
-            )
+            member_name_matches = not search or search.lower() in full_name.lower()
 
             for ag in member.access_groups:
-                if not ag.is_active or not all_access_group_ancestors_active(ag.id):
+                if not ag.is_active or not all_access_group_ancestors_active(ag):
+                    continue
+
+                group_name_matches = not search or search.lower() in ag.name.lower()
+
+                if not member_name_matches and not group_name_matches:
                     continue
 
                 if ag.id not in access_group_map:

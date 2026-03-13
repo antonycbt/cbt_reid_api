@@ -69,6 +69,7 @@ def list_site_hierarchies(
 def list_active_site_hierarchies(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    search: Optional[str] = Query(None),  # ← add this
 ):
     used_by_camera = exists().where(
         and_(
@@ -97,6 +98,10 @@ def list_active_site_hierarchies(
     valid_sites = [s for s in sites if all_ancestors_active(s)]
     for site in valid_sites:
         site.children = []
+
+    # ← apply search filter after hierarchy validation
+    if search:
+        valid_sites = [s for s in valid_sites if search.lower() in s.name.lower()]
 
     return {
         "message": "Active site hierarchies fetched successfully",

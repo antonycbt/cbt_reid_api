@@ -64,20 +64,17 @@ class NormalizedReportService:
                 camera_location = None
                 if r.camera:
                     camera_name = r.camera.name
-                    # site_location_rel gives us the SiteLocation object
-                    # SiteLocation.name is a @property → site_hierarchy.name
                     if r.camera.site_location_rel:
                         camera_location = r.camera.site_location_rel.name
-
-                movement_label = MOVEMENT_TYPES.get(r.movement_type)
 
                 serialized.append({
                     "member": member_name,
                     "guest_temp_id": r.guest_temp_id,
                     "camera": camera_name,
                     "location": camera_location,
-                    "movement_type": movement_label,
-                    "movement_ts": r.movement_ts.isoformat() if r.movement_ts else None,
+                    "movement_type": r.movement_type,          # ← raw int (1 or 2)
+                    "entry_ts": r.entry_ts.isoformat() if r.entry_ts else None,   # ← updated
+                    "exit_ts": r.exit_ts.isoformat() if r.exit_ts else None,      # ← new
                     "average_match_value": r.average_match_value,
                 })
 

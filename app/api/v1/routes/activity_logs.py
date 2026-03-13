@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.services.activity_log_service import ActivityLogService
 from app.core.dependencies import get_current_user
 from app.db.models.user import User
+from app.core.constants import TARGET_TYPE
 
 router = APIRouter()
 
@@ -32,3 +33,11 @@ def list_activity_logs(
         entity=entity,
     )
     return {"message": "Activity logs fetched successfully", **result}
+
+@router.get("/logs_entity")
+def list_log_entities(
+    current_user: User = Depends(get_current_user),
+):
+    """Return the list of entity types derived from TARGET_TYPE constants."""
+    entities = [v["entity"] for v in TARGET_TYPE.values()]
+    return {"message": "Entities fetched successfully", "entities": entities}    
